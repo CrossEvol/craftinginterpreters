@@ -376,7 +376,7 @@ class _Context {
   }
 
   /// Whether [parent] has [name].
-  bool isIn(String name) => parent != null && parent.has(name);
+  bool isIn(String name) => parent.has(name);
 
   /// How many levels of list nesting this context contains.
   int get listDepth {
@@ -460,7 +460,6 @@ class _Context {
   }
 
   String toString() {
-    if (parent == null) return name;
     return "$parent > $name";
   }
 }
@@ -500,7 +499,7 @@ class _Paragraph {
     var buffer = StringBuffer();
     var tag = context.paragraphTag;
 
-    if (previous != null && _isNext(tag, previous.context.paragraphTag)) {
+    if (_isNext(tag, previous.context.paragraphTag)) {
       tag += "-next";
     }
 
@@ -528,11 +527,6 @@ class _Inline {
   bool get isText => tag == null;
 
   void prettyPrint(StringBuffer buffer, _Context context) {
-    if (tag == null) {
-      buffer.write(text);
-      return;
-    }
-
     var fullTag = tag;
     var prefix = context.inlinePrefix;
     if (prefix != "") fullTag = "$prefix-$fullTag";

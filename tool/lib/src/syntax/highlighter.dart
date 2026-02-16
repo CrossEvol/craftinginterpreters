@@ -46,7 +46,7 @@ class Highlighter {
   String _highlight(List<String> lines, String preClass, int indent) {
     if (!_format.isPrint) {
       _buffer.write("<pre");
-      if (preClass != null) _buffer.write(' class="$preClass"');
+      _buffer.write(' class="$preClass"');
       _buffer.write(">");
 
       // The HTML spec mandates that a leading newline after '<pre>' is ignored.

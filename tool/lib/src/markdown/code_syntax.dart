@@ -137,11 +137,6 @@ String _buildSnippet(Format format, CodeTag tag, Snippet snippet) {
   // NOTE: If you change this, be sure to update the baked in example snippet
   // in introduction.md.
 
-  if (snippet == null) {
-    print("Undefined snippet ${tag.name}");
-    return "<strong>ERROR: Missing snippet ${tag.name}</strong>\n";
-  }
-
   var location = <String>[];
   if (tag.showLocation) location = snippet.locationHtmlLines;
 
@@ -153,26 +148,22 @@ String _buildSnippet(Format format, CodeTag tag, Snippet snippet) {
         cssClass: snippet.added.isNotEmpty ? "insert-before" : null);
   }
 
-  if (snippet.addedComma != null) {
-    var commaLine = formatCode(
-        snippet.file.language, [snippet.addedComma], format,
-        preClass: "insert-before");
-    var comma = commaLine.lastIndexOf(",");
-    buffer.write(commaLine.substring(0, comma));
-    buffer.write('<span class="insert-comma">,</span>');
-    buffer.write(commaLine.substring(comma + 1));
-  }
+  var commaLine = formatCode(
+      snippet.file.language, [snippet.addedComma], format,
+      preClass: "insert-before");
+  var comma = commaLine.lastIndexOf(",");
+  buffer.write(commaLine.substring(0, comma));
+  buffer.write('<span class="insert-comma">,</span>');
+  buffer.write(commaLine.substring(comma + 1));
 
   if (tag.showLocation) {
     var lines = location.join("<br>\n");
     buffer.writeln('<div class="source-file">$lines</div>');
   }
 
-  if (snippet.added != null) {
-    var added = formatCode(snippet.file.language, snippet.added, format,
-        preClass: tag.beforeCount > 0 || tag.afterCount > 0 ? "insert" : null);
-    buffer.write(added);
-  }
+  var added = formatCode(snippet.file.language, snippet.added, format,
+      preClass: tag.beforeCount > 0 || tag.afterCount > 0 ? "insert" : null);
+  buffer.write(added);
 
   if (snippet.contextAfter.isNotEmpty) {
     _writeContextHtml(format, buffer, snippet.contextAfter,
@@ -198,50 +189,46 @@ String _buildSnippetXml(CodeTag tag, Snippet snippet) {
     _writeContextXml(buffer, snippet.contextBefore, "before");
   }
 
-  if (snippet.addedComma != null) {
-    // TODO: How should this look in print?
-    buffer.write("TODO added comma");
+  // TODO: How should this look in print?
+  buffer.write("TODO added comma");
 //    var commaLine = formatCode(snippet.file.language, [snippet.addedComma],
 //        preClass: "insert-before", xml: true);
 //    var comma = commaLine.lastIndexOf(",");
 //    buffer.write(commaLine.substring(0, comma));
 //    buffer.write('<span class="insert-comma">,</span>');
 //    buffer.write(commaLine.substring(comma + 1));
-  }
 
-  if (snippet.added != null) {
-    // Use different tags based on whether there is context before, after,
-    // neither, or both.
-    String insertTag;
-    if (tag.beforeCount > 0) {
-      if (tag.afterCount > 0) {
-        insertTag = "interpreter-between";
-      } else {
-        insertTag = "interpreter-after";
-      }
+  // Use different tags based on whether there is context before, after,
+  // neither, or both.
+  String insertTag;
+  if (tag.beforeCount > 0) {
+    if (tag.afterCount > 0) {
+      insertTag = "interpreter-between";
     } else {
-      if (tag.afterCount > 0) {
-        insertTag = "interpreter-before";
-      } else {
-        insertTag = "interpreter";
-      }
+      insertTag = "interpreter-after";
     }
-
-    if (snippet.contextBefore.isNotEmpty) buffer.writeln();
-    buffer.write("<$insertTag>");
-
-    var code = formatCode(snippet.file.language, snippet.added, Format.print);
-    // Discard the trailing newline so we don't end up with a blank paragraph
-    // in InDesign.
-    code = code.trimTrailingNewline();
-
-    // Replace newlines with soft breaks so that InDesign treats the entire
-    // snippet as a single paragraph and keeps it together.
-    code = code.replaceAll("\n", "&#x2028;");
-
-    buffer.write(code);
-    buffer.write("</$insertTag>");
+  } else {
+    if (tag.afterCount > 0) {
+      insertTag = "interpreter-before";
+    } else {
+      insertTag = "interpreter";
+    }
   }
+
+  if (snippet.contextBefore.isNotEmpty) buffer.writeln();
+  buffer.write("<$insertTag>");
+
+  var code = formatCode(snippet.file.language, snippet.added, Format.print);
+  // Discard the trailing newline so we don't end up with a blank paragraph
+  // in InDesign.
+  code = code.trimTrailingNewline();
+
+  // Replace newlines with soft breaks so that InDesign treats the entire
+  // snippet as a single paragraph and keeps it together.
+  code = code.replaceAll("\n", "&#x2028;");
+
+  buffer.write(code);
+  buffer.write("</$insertTag>");
 
   if (snippet.contextAfter.isNotEmpty) {
     buffer.writeln();
@@ -254,7 +241,7 @@ String _buildSnippetXml(CodeTag tag, Snippet snippet) {
 void _writeContextHtml(Format format, StringBuffer buffer, List<String> lines,
     {String cssClass}) {
   buffer.write("<pre");
-  if (cssClass != null) buffer.write(' class="$cssClass"');
+  buffer.write(' class="$cssClass"');
   buffer.write(">");
 
   // The HTML spec mandates that a leading newline after '<pre>' is ignored.

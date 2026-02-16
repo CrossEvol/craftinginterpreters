@@ -32,9 +32,7 @@ Future<void> _splitSourceFile(Book book, Page chapter, String sourcePath,
   if (relative == "com/craftinginterpreters/lox/Stmt.java") return;
 
   var package = chapter.shortName;
-  if (tag != null) {
-    package = p.join("snippets", package, tag.directory);
-  }
+  package = p.join("snippets", package, tag.directory);
 
   // If we're generating the split for an entire chapter, include all its
   // snippets.

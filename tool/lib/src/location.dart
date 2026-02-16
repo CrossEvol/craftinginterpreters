@@ -38,8 +38,8 @@ class Location {
 
   String toString() {
     var result = "$kind $name";
-    if (signature != null) result += "($signature)";
-    if (parent != null) result = "$parent > $result";
+    result += "($signature)";
+    result = "$parent > $result";
     return result;
   }
 
@@ -50,7 +50,7 @@ class Location {
     if (kind == "top") return "add to top of file";
 
     // Note: The order of these is highly significant.
-    if (kind == "class" && parent?.kind == "class") {
+    if (kind == "class" && parent.kind == "class") {
       return "nest inside class <em>${parent.name}</em>";
     }
 
@@ -109,7 +109,7 @@ class Location {
     if (kind == "top") return "add to top of file";
 
     // Note: The order of these is highly significant.
-    if (kind == "class" && parent?.kind == "class") {
+    if (kind == "class" && parent.kind == "class") {
       return "nest inside class <location-type>${parent.name}</location-type>";
     }
 

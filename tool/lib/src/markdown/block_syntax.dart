@@ -30,9 +30,7 @@ class BookHeaderSyntax extends BlockSyntax {
     var number = "";
     if (!header.isSpecial) {
       number = "${_page.numberString}&#8202;.&#8202;${header.headerIndex}";
-      if (header.subheaderIndex != null) {
-        number += "&#8202;.&#8202;${header.subheaderIndex}";
-      }
+      number += "&#8202;.&#8202;${header.subheaderIndex}";
     }
 
     var link = Element("a", [

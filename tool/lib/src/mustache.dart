@@ -19,21 +19,17 @@ class Mustache {
       : _templateDirectory = templateDirectory ?? p.join("asset", "mustache");
 
   String render(Book book, Page page, String body, {String template}) {
-    var part = page.part?.title;
+    var part = page.part.title;
 
     var up = "Table of Contents";
-    if (part != null) {
-      up = part;
-    } else if (page.title == "Table of Contents") {
-      up = "Crafting Interpreters";
-    }
-
+    up = part;
+  
     var previousPage = book.adjacentPage(page, -1);
     var nextPage = book.adjacentPage(page, 1);
     String nextType;
-    if (nextPage != null && nextPage.isChapter) {
+    if (nextPage.isChapter) {
       nextType = "Chapter";
-    } else if (nextPage != null && nextPage.isPart) {
+    } else if (nextPage.isPart) {
       nextType = "Part";
     }
 
@@ -49,7 +45,7 @@ class Mustache {
 
     var data = <String, dynamic>{
       "is_chapter": part != null,
-      "is_part": part == null && page.title != null && !isFrontmatter,
+      "is_part": part == null && !isFrontmatter,
       "is_frontmatter": isFrontmatter,
       "title": page.title,
       "part": part,
@@ -65,16 +61,16 @@ class Mustache {
       "number": page.numberString,
       // Previous page.
       "has_prev": previousPage != null,
-      "prev": previousPage?.title,
-      "prev_file": previousPage?.fileName,
+      "prev": previousPage.title,
+      "prev_file": previousPage.fileName,
       // Next page.
       "has_next": nextPage != null,
-      "next": nextPage?.title,
-      "next_file": nextPage?.fileName,
+      "next": nextPage.title,
+      "next_file": nextPage.fileName,
       "next_type": nextType,
       "has_up": up != null,
       "up": up,
-      "up_file": up != null ? toFileName(up) : null,
+      "up_file": toFileName(up),
       // TODO: Only need this for contents page.
       "part_1": _makePartData(book, 0),
       "part_2": _makePartData(book, 1),
@@ -101,7 +97,7 @@ class Mustache {
           "title": chapter.title,
           "number": chapter.numberString,
           "file": chapter.fileName,
-          "design_note": chapter.designNote?.replaceAll("'", "&rsquo;"),
+          "design_note": chapter.designNote.replaceAll("'", "&rsquo;"),
         }
     ];
   }

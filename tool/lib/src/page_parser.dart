@@ -79,27 +79,25 @@ CodeTag _createCodeTag(Page page, int index, String name, String options) {
   var beforeCount = 0;
   var afterCount = 0;
 
-  if (options != null) {
-    for (var option in options.split(", ")) {
-      if (option == "no location") {
-        showLocation = false;
-        continue;
-      }
-
-      var match = _beforePattern.firstMatch(option);
-      if (match != null) {
-        beforeCount = int.parse(match[1]);
-        continue;
-      }
-
-      match = _afterPattern.firstMatch(option);
-      if (match != null) {
-        afterCount = int.parse(match[1]);
-        continue;
-      }
-
-      throw "Unknown code option '$option'";
+  for (var option in options.split(", ")) {
+    if (option == "no location") {
+      showLocation = false;
+      continue;
     }
+
+    var match = _beforePattern.firstMatch(option);
+    if (match != null) {
+      beforeCount = int.parse(match[1]);
+      continue;
+    }
+
+    match = _afterPattern.firstMatch(option);
+    if (match != null) {
+      afterCount = int.parse(match[1]);
+      continue;
+    }
+
+    throw "Unknown code option '$option'";
   }
 
   return CodeTag(page, name, index, beforeCount, afterCount, showLocation);

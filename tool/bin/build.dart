@@ -73,8 +73,7 @@ void _buildPages({bool skipUpToDate = false}) {
 List<int> _buildPage(Book book, Mustache mustache, Page page,
     {DateTime dependenciesModified}) {
   // See if the HTML is up to date.
-  if (dependenciesModified != null &&
-      _isUpToDate(page.htmlPath, page.markdownPath, dependenciesModified)) {
+  if (_isUpToDate(page.htmlPath, page.markdownPath, dependenciesModified)) {
     return [0, 0, 0];
   }
 
@@ -85,10 +84,6 @@ List<int> _buildPage(Book book, Mustache mustache, Page page,
   var wordCount = proseCount;
   for (var tag in page.codeTags) {
     var snippet = book.findSnippet(tag);
-    if (snippet == null) {
-      print("No snippet for $tag");
-      continue;
-    }
 
     codeLineCount += snippet.added.length;
     for (var line in snippet.added) wordCount += line.wordCount;
@@ -202,7 +197,7 @@ DateTime _mostRecentlyModified(List<String> globs) {
     for (var entry in Glob(glob).listSync()) {
       if (entry is File) {
         var modified = entry.lastModifiedSync();
-        if (latest == null || modified.isAfter(latest)) latest = modified;
+        if (modified.isAfter(latest)) latest = modified;
       }
     }
   }

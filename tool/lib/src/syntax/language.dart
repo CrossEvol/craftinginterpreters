@@ -7,7 +7,6 @@ class Language {
 
   Language({String keywords, String types, List<Rule> this.rules}) {
     keywordType(String wordList, String type) {
-      if (wordList == null) return;
       for (var word in wordList.split(" ")) {
         words[word] = type;
       }

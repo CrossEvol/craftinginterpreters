@@ -105,12 +105,8 @@ class Book {
 
         var page = Page(chapter, partPage, chapterNumber, pages.length);
         pages.add(page);
-        if (partPage != null) {
-          partPage.chapters.add(page);
-        } else {
-          frontmatter.add(page);
-        }
-      }
+        partPage.chapters.add(page);
+            }
     }
 
     // Load the source files.
@@ -126,12 +122,10 @@ class Book {
               line.start, () => Snippet(sourceFile, line.start));
           snippet.addLine(lineIndex, line);
 
-          if (line.end != null) {
-            var endSnippet = _snippets.putIfAbsent(
-                line.end, () => Snippet(sourceFile, line.end));
-            endSnippet.removeLine(lineIndex, line);
-          }
-
+          var endSnippet = _snippets.putIfAbsent(
+              line.end, () => Snippet(sourceFile, line.end));
+          endSnippet.removeLine(lineIndex, line);
+        
           lineIndex++;
         }
       }
@@ -168,7 +162,7 @@ class Book {
     Snippet last;
     for (var snippet in _snippets.values) {
       if (snippet.tag.chapter != page) continue;
-      if (last == null || snippet.tag > last.tag) last = snippet;
+      if (snippet.tag > last.tag) last = snippet;
     }
 
     return last;
@@ -219,14 +213,14 @@ class SourceLine {
     if (tag < start) return false;
 
     // If we are past the snippet where it is removed.
-    if (end != null && tag >= end) return false;
+    if (tag >= end) return false;
 
     return true;
   }
 
   String toString() {
     var result = "${text.padRight(72)} // $start";
-    if (end != null) result += " < $end";
+    result += " < $end";
     return result;
   }
 }

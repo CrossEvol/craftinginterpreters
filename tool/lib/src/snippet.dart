@@ -53,7 +53,7 @@ class Snippet {
     var result = ["<em>${file.nicePath}</em>"];
 
     var html = _location.toHtml(precedingLocation, removed);
-    if (html != null) result.add(html);
+    result.add(html);
 
     if (removed.isNotEmpty && added.isNotEmpty) {
       result.add("replace ${removed.length} line${pluralize(removed)}");
@@ -61,10 +61,8 @@ class Snippet {
       result.add("remove ${removed.length} line${pluralize(removed)}");
     }
 
-    if (addedComma != null) {
-      result.add("add <em>&ldquo;,&rdquo;</em> to previous line");
-    }
-
+    result.add("add <em>&ldquo;,&rdquo;</em> to previous line");
+  
     return result;
   }
 
@@ -75,13 +73,12 @@ class Snippet {
 
     var xml = _location.toXml(precedingLocation, removed);
     var changes = [
-      if (xml != null) xml,
+      xml,
       if (removed.isNotEmpty && added.isNotEmpty)
         "replace ${removed.length} line${pluralize(removed)}"
       else if (removed.isNotEmpty && added.isEmpty)
         "remove ${removed.length} line${pluralize(removed)}",
-      if (addedComma != null)
-        "add <location-comma>&ldquo;,&rdquo;</location-comma> to previous line"
+      "add <location-comma>&ldquo;,&rdquo;</location-comma> to previous line"
     ].map((change) => "<location-change>$change</location-change>");
 
     if (changes.isNotEmpty) {
@@ -123,8 +120,7 @@ class Snippet {
       checkedLines++;
 
       // Store the most precise preceding location we find.
-      if (_precedingLocation == null ||
-          line.location.depth > _precedingLocation.depth) {
+      if (line.location.depth > _precedingLocation.depth) {
         _precedingLocation = line.location;
       }
     }

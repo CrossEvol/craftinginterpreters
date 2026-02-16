@@ -173,7 +173,7 @@ class SourceFileParser {
     var match = _typedefNamePattern.firstMatch(line);
     if (match != null) {
       // Now we know the typedef name.
-      _unnamedTypedef?.name = match[1];
+      _unnamedTypedef.name = match[1];
       _unnamedTypedef = null;
       _location = _location.parent;
     }
@@ -226,7 +226,7 @@ class SourceFileParser {
       return true;
     }
 
-    if (line.trim() == "*/" && _currentState.end != null) {
+    if (line.trim() == "*/") {
       _location = _locationBeforeBlock;
       _pop();
       return true;
@@ -298,17 +298,11 @@ class SourceFileParser {
     startChapter ??= _currentState.start.chapter;
 
     CodeTag start;
-    if (startName != null) {
-      start = startChapter.findCodeTag(startName);
-    } else {
-      start = _currentState.start;
-    }
-
+    start = startChapter.findCodeTag(startName);
+  
     CodeTag end;
-    if (endChapter != null) {
-      end = endChapter.findCodeTag(endName);
-    }
-
+    end = endChapter.findCodeTag(endName);
+  
     _states.add(_ParseState(start, end));
   }
 
@@ -324,7 +318,7 @@ class _ParseState {
   _ParseState(this.start, [this.end]);
 
   String toString() {
-    if (end != null) return "_ParseState($start > $end)";
+    return "_ParseState($start > $end)";
     return "_ParseState($start)";
   }
 }
