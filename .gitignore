@@ -4,6 +4,10 @@
 /gen/
 clox
 *.class
+*.exe
+*.o
+*.out
+*.obj
 exercises/chapter01_introduction/3/linked_list
 .idea/
 
@@ -16,3 +20,6 @@ xcuserdata/
 # Dart stuff.
 /tool/.dart_tool/
 /tool/.packages
+
+# vscode
+.vscode/settings.json

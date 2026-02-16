@@ -1,5 +1,14 @@
 BUILD_DIR := build
-TOOL_SOURCES := tool/pubspec.lock $(shell find tool -name '*.dart')
+# TOOL_SOURCES := tool/pubspec.lock $(shell find tool -name '*.dart')
+# 判断是否为 Windows 系统
+ifeq ($(OS), Windows_NT)
+    # Windows 逻辑：使用 dir 命令或 powershell，这里假设你希望列出文件
+    # 注意：Windows 原生路径通常使用 \
+    TOOL_SOURCES := tool/pubspec.lock $(shell dir /s /b tool\*.dart)
+else
+    # 类 Unix 逻辑 (Linux/macOS)
+    TOOL_SOURCES := tool/pubspec.lock $(shell find tool -name '*.dart')
+endif
 BUILD_SNAPSHOT := $(BUILD_DIR)/build.dart.snapshot
 TEST_SNAPSHOT := $(BUILD_DIR)/test.dart.snapshot
 
@@ -55,7 +64,8 @@ test_all: debug jlox c_chapters java_chapters compile_snippets $(TEST_SNAPSHOT)
 $(TEST_SNAPSHOT): $(TOOL_SOURCES)
 	@ mkdir -p build
 	@ echo "Compiling Dart snapshot..."
-	@ dart --snapshot=$@ --snapshot-kind=app-jit tool/bin/test.dart clox >/dev/null
+	@ dart compile kernel tool/bin/test.dart -o $@ 
+	@ dart $@ clox
 
 # Compile a debug build of clox.
 debug:
