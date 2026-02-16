@@ -23,3 +23,6 @@ xcuserdata/
 
 # vscode
 .vscode/settings.json
+
+.zig-cache/
+zig-out/
