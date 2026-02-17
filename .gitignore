@@ -8,6 +8,7 @@ clox
 *.o
 *.out
 *.obj
+*.pdb
 exercises/chapter01_introduction/3/linked_list
 .idea/
 

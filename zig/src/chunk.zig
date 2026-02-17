@@ -48,8 +48,8 @@ pub const Chunk = struct {
         try self.lines.append(self.allocator, line);
     }
 
-    pub fn addConstant(self: *Chunk, value: Value) !i32 {
-        try self.constants.write(value);
+    pub fn addConstant(self: *Chunk, value: Value) i32 {
+        self.constants.write(value);
         return @intCast(self.constants.values.items.len - 1);
     }
 };

@@ -26,8 +26,11 @@ pub const ValueArray = struct {
     }
 
     // void writeValueArray(ValueArray* array, Value value);
-    pub fn write(self: *ValueArray, value: Value) !void {
-        try self.values.append(self.allocator, value);
+    pub fn write(self: *ValueArray, value: Value) void {
+        self.values.append(self.allocator, value) catch |err| {
+            std.debug.print("{s}", .{@errorName(err)});
+            @panic("OOM");
+        };
     }
 };
 

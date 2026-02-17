@@ -28,7 +28,7 @@ fn repl(allocator: std.mem.Allocator, vm: *VM) !void {
             break;
         };
 
-        _ = vm.interpret(line);
+        _ = try vm.interpret(line);
     }
 }
 
@@ -77,11 +77,11 @@ fn readFile(allocator: std.mem.Allocator, path: []const u8) []const u8 {
     return data;
 }
 
-fn runFile(allocator: std.mem.Allocator, vm: *VM, path: []const u8) void {
+fn runFile(allocator: std.mem.Allocator, vm: *VM, path: []const u8) !void {
     const source = readFile(allocator, path);
     defer allocator.free(source);
 
-    const result = vm.interpret(source);
+    const result = try vm.interpret(source);
     if (result == .INTERPRET_COMPILE_ERROR) std.process.exit(65);
     if (result == .INTERPRET_RUNTIME_ERROR) std.process.exit(70);
 }
@@ -101,7 +101,7 @@ pub fn main() !void {
     if (args.len == 1) {
         try repl(allocator, &vm);
     } else if (args.len == 2) {
-        runFile(allocator, &vm, args[1]);
+        try runFile(allocator, &vm, args[1]);
     } else {
         std.debug.print("Usage: zlox [path]\n", .{});
         std.process.exit(64);
