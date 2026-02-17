@@ -12,6 +12,12 @@ endif
 BUILD_SNAPSHOT := $(BUILD_DIR)/build.dart.snapshot
 TEST_SNAPSHOT := $(BUILD_DIR)/test.dart.snapshot
 
+buildz:
+	@ zig build-exe zig/src/main.zig
+
+runz: 
+	@ zig run zig/src/main.zig
+
 default: book clox jlox
 
 # Run dart pub get on tool directory.

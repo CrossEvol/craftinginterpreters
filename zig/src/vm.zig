@@ -2,6 +2,7 @@ const std = @import("std");
 
 const Chunk = @import("chunk.zig").Chunk;
 const common = @import("common.zig");
+const compile = @import("compiler.zig").compile;
 const disassembleInstruction = @import("debug.zig").disassembleInstruction;
 const OpCode = @import("chunk.zig").OpCode;
 const printValue = @import("value.zig").printValue;
@@ -52,10 +53,10 @@ pub const VM = struct {
         return @intCast(self.stack.items.len);
     }
 
-    pub fn interpret(self: *VM, chunk: *Chunk) !InterpretResult {
-        self.chunk = chunk;
-        self.ip = 0;
-        return try self.run();
+    pub fn interpret(self: *VM, source: []const u8) InterpretResult {
+        _ = self;
+        compile(source);
+        return .INTERPRET_OK;
     }
 
     fn run(self: *VM) !InterpretResult {
