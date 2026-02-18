@@ -1,6 +1,77 @@
 const std = @import("std");
 
-pub const Value = f64;
+const ValueType = enum {
+    bool,
+    nil, // [user-types]
+    number,
+};
+
+pub const Value = union(ValueType) {
+    bool: bool,
+    nil: void,
+    number: f64,
+
+    pub inline fn isBool(value: Value) bool {
+        return switch (value) {
+            .bool => true,
+            else => false,
+        };
+    }
+
+    pub inline fn isNil(value: Value) bool {
+        return switch (value) {
+            .nil => true,
+            else => false,
+        };
+    }
+
+    pub inline fn isNumber(value: Value) bool {
+        return switch (value) {
+            .number => true,
+            else => false,
+        };
+    }
+
+    pub inline fn asBool(value: Value) bool {
+        return value.bool;
+    }
+
+    pub inline fn asNumber(value: Value) f64 {
+        return value.number;
+    }
+
+    pub fn boolVal(value: bool) Value {
+        return .{
+            .bool = value,
+        };
+    }
+
+    inline fn nilVal() Value {
+        return .{
+            .nil = {},
+        };
+    }
+
+    pub const nil_val = nilVal();
+
+    pub fn numberVal(value: f64) Value {
+        return .{
+            .number = value,
+        };
+    }
+
+    pub fn valuesEqual(a: Value, b: Value) bool {
+        if (std.meta.activeTag(a) != std.meta.activeTag(b)) {
+            return false;
+        }
+
+        return switch (a) {
+            .bool => a.asBool() == b.asBool(),
+            .nil => true,
+            .number => a.asNumber() == b.asNumber(),
+        };
+    }
+};
 
 pub const ValueArray = struct {
     values: std.ArrayList(Value),
@@ -36,5 +107,15 @@ pub const ValueArray = struct {
 
 // void printValue(Value value);
 pub fn printValue(value: Value) void {
-    std.debug.print("{d}", .{value});
+    switch (value) {
+        .bool => {
+            std.debug.print("{}", .{value.asBool()});
+        },
+        .nil => {
+            std.debug.print("nil", .{});
+        },
+        .number => {
+            std.debug.print("{d}", .{value.asNumber()});
+        },
+    }
 }

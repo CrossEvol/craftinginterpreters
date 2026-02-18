@@ -24,6 +24,7 @@ xcuserdata/
 
 # vscode
 .vscode/settings.json
+.vscode/bookmarks.json
 
 .zig-cache/
 zig-out/

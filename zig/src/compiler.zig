@@ -8,6 +8,7 @@ const Scanner = @import("scanner.zig").Scanner;
 const Token = @import("scanner.zig").Token;
 const TokenType = @import("scanner.zig").TokenType;
 const Value = @import("value.zig").Value;
+const numberVal = Value.numberVal;
 
 const Parser = struct {
     current: Token,
@@ -82,31 +83,31 @@ pub const Compiler = struct {
         .TOKEN_SEMICOLON = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_SLASH = ParseRule.init(null, binary, .PREC_FACTOR),
         .TOKEN_STAR = ParseRule.init(null, binary, .PREC_FACTOR),
-        .TOKEN_BANG = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_BANG_EQUAL = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_BANG = ParseRule.init(unary, null, .PREC_NONE),
+        .TOKEN_BANG_EQUAL = ParseRule.init(null, binary, .PREC_EQUALITY),
         .TOKEN_EQUAL = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_EQUAL_EQUAL = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_GREATER = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_GREATER_EQUAL = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_LESS = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_LESS_EQUAL = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_EQUAL_EQUAL = ParseRule.init(null, binary, .PREC_EQUALITY),
+        .TOKEN_GREATER = ParseRule.init(null, binary, .PREC_COMPARISON),
+        .TOKEN_GREATER_EQUAL = ParseRule.init(null, binary, .PREC_COMPARISON),
+        .TOKEN_LESS = ParseRule.init(null, binary, .PREC_COMPARISON),
+        .TOKEN_LESS_EQUAL = ParseRule.init(null, binary, .PREC_COMPARISON),
         .TOKEN_IDENTIFIER = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_STRING = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_NUMBER = ParseRule.init(number, null, .PREC_NONE),
         .TOKEN_AND = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_CLASS = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_ELSE = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_FALSE = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_FALSE = ParseRule.init(literal, null, .PREC_NONE),
         .TOKEN_FOR = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_FUN = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_IF = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_NIL = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_NIL = ParseRule.init(literal, null, .PREC_NONE),
         .TOKEN_OR = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_PRINT = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_RETURN = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_SUPER = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_THIS = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_TRUE = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_TRUE = ParseRule.init(literal, null, .PREC_NONE),
         .TOKEN_VAR = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_WHILE = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_ERROR = ParseRule.init(null, null, .PREC_NONE),
@@ -162,20 +163,39 @@ pub const Compiler = struct {
         self.errorAtCurrent(message);
     }
 
-    fn emitByte(self: *Compiler, byte: u8) void {
-        self.currentChunk().write(byte, self.parser.previous.line) catch |err| {
+    /// (byte : u8 | OpCode)
+    fn emitByte(self: *Compiler, byte: anytype) void {
+        const Byte = @TypeOf(byte);
+        const byte_type_info = @typeInfo(Byte);
+        const valid = switch (byte_type_info) {
+            .int => |info| info.signedness == .unsigned and info.bits == 8,
+            .@"enum" => |_| Byte == OpCode,
+            else => false,
+        };
+        if (!valid) {
+            @panic("byte must be an unsigned 8-bit integer or an OpCode enum");
+        }
+
+        const value: u8 = switch (byte_type_info) {
+            .int, .comptime_int => byte,
+            .@"enum" => @intFromEnum(byte),
+            else => unreachable,
+        };
+
+        self.currentChunk().write(value, self.parser.previous.line) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic(@errorName(err));
         };
     }
 
-    fn emitBytes(self: *Compiler, byte1: u8, byte2: u8) void {
+    // (byte1 : u8 | OpCode, byte2 : u8 | OpCode)
+    fn emitBytes(self: *Compiler, byte1: anytype, byte2: anytype) void {
         self.emitByte(byte1);
         self.emitByte(byte2);
     }
 
     fn emitReturn(self: *Compiler) void {
-        self.emitByte(@intFromEnum(OpCode.OP_RETURN));
+        self.emitByte(OpCode.OP_RETURN);
     }
 
     fn makeConstant(self: *Compiler, value: Value) u8 {
@@ -189,7 +209,7 @@ pub const Compiler = struct {
     }
 
     fn emitConstant(self: *Compiler, value: Value) void {
-        self.emitBytes(@intFromEnum(OpCode.OP_CONSTANT), self.makeConstant(value));
+        self.emitBytes(OpCode.OP_CONSTANT, self.makeConstant(value));
     }
 
     fn endCompiler(self: *Compiler) void {
@@ -233,10 +253,25 @@ pub const Compiler = struct {
         self.parsePrecedence(@enumFromInt(@intFromEnum(rule.precedence) + 1));
 
         switch (operator_type) {
-            .TOKEN_PLUS => self.emitByte(@intFromEnum(OpCode.OP_ADD)),
-            .TOKEN_MINUS => self.emitByte(@intFromEnum(OpCode.OP_SUBTRACT)),
-            .TOKEN_STAR => self.emitByte(@intFromEnum(OpCode.OP_MULTIPLY)),
-            .TOKEN_SLASH => self.emitByte(@intFromEnum(OpCode.OP_DIVIDE)),
+            .TOKEN_BANG_EQUAL => self.emitBytes(OpCode.OP_EQUAL, OpCode.OP_NOT),
+            .TOKEN_EQUAL_EQUAL => self.emitByte(OpCode.OP_EQUAL),
+            .TOKEN_GREATER => self.emitByte(OpCode.OP_GREATER),
+            .TOKEN_GREATER_EQUAL => self.emitBytes(OpCode.OP_LESS, OpCode.OP_NOT),
+            .TOKEN_LESS => self.emitByte(OpCode.OP_LESS),
+            .TOKEN_LESS_EQUAL => self.emitBytes(OpCode.OP_GREATER, OpCode.OP_NOT),
+            .TOKEN_PLUS => self.emitByte(OpCode.OP_ADD),
+            .TOKEN_MINUS => self.emitByte(OpCode.OP_SUBTRACT),
+            .TOKEN_STAR => self.emitByte(OpCode.OP_MULTIPLY),
+            .TOKEN_SLASH => self.emitByte(OpCode.OP_DIVIDE),
+            else => {}, // Unreachable.
+        }
+    }
+
+    fn literal(self: *Compiler) void {
+        switch (self.parser.previous.type) {
+            .TOKEN_FALSE => self.emitByte(OpCode.OP_FALSE),
+            .TOKEN_NIL => self.emitByte(OpCode.OP_NIL),
+            .TOKEN_TRUE => self.emitByte(OpCode.OP_TRUE),
             else => {}, // Unreachable.
         }
     }
@@ -251,7 +286,7 @@ pub const Compiler = struct {
             std.debug.print("{s}", .{@errorName(err)});
             @panic(@errorName(err));
         };
-        self.emitConstant(value);
+        self.emitConstant(numberVal(value));
     }
 
     fn unary(self: *Compiler) void {
@@ -262,7 +297,8 @@ pub const Compiler = struct {
 
         // Emit the operator instruction.
         switch (operator_type) {
-            .TOKEN_MINUS => self.emitByte(@intFromEnum(OpCode.OP_NEGATE)),
+            .TOKEN_BANG => self.emitByte(OpCode.OP_NOT),
+            .TOKEN_MINUS => self.emitByte(OpCode.OP_NEGATE),
             else => {}, // Unreachable.
         }
     }

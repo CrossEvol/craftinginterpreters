@@ -42,10 +42,17 @@ pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
 
     switch (instruction) {
         .OP_CONSTANT => return constantInstruction("OP_CONSTANT", chunk, offset),
+        .OP_NIL => return simpleInstruction("OP_NIL", offset),
+        .OP_TRUE => return simpleInstruction("OP_TRUE", offset),
+        .OP_FALSE => return simpleInstruction("OP_FALSE", offset),
+        .OP_EQUAL => return simpleInstruction("OP_EQUAL", offset),
+        .OP_GREATER => return simpleInstruction("OP_GREATER", offset),
+        .OP_LESS => return simpleInstruction("OP_LESS", offset),
         .OP_ADD => return simpleInstruction("OP_ADD", offset),
         .OP_SUBTRACT => return simpleInstruction("OP_SUBTRACT", offset),
         .OP_MULTIPLY => return simpleInstruction("OP_MULTIPLY", offset),
         .OP_DIVIDE => return simpleInstruction("OP_DIVIDE", offset),
+        .OP_NOT => return simpleInstruction("OP_NOT", offset),
         .OP_NEGATE => return simpleInstruction("OP_NEGATE", offset),
         .OP_RETURN => return simpleInstruction("OP_RETURN", offset),
         else => {
