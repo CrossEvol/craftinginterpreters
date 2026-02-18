@@ -1,0 +1,25 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build-zlox-debug",
+            "type": "shell",
+            "command": "zig",
+            "args": [
+                "build",
+                // "run",
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/zig"
+            },
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "silent",
+                "focus": false,
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        }
+    ]
+}
