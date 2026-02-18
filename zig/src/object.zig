@@ -31,6 +31,23 @@ pub const Obj = struct {
 pub const ObjString = struct {
     obj: Obj,
     chars: []const u8,
+    hash: u32,
+
+    pub fn init(obj: ?*Obj, chars: []const u8, hash: u32) ObjString {
+        return .{
+            .obj = .{
+                .type = .OBJ_STRING,
+                .next = obj,
+            },
+            .chars = chars,
+            .hash = hash,
+        };
+    }
+
+    pub fn deinit(self: *ObjString, allocator: std.mem.Allocator) void {
+        self.obj.next = null;
+        allocator.free(self.chars);
+    }
 
     /// Upcast , *ObjString -> *Obj
     pub fn asObj(self: *ObjString) *Obj {

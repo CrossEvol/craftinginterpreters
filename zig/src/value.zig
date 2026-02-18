@@ -93,16 +93,7 @@ pub const Value = union(ValueType) {
             .bool => a.asBool() == b.asBool(),
             .nil => true,
             .number => a.asNumber() == b.asNumber(),
-            .obj => {
-                const a_string = asString(a);
-                const b_string = asString(b);
-
-                if (a_string.chars.len != b_string.chars.len) {
-                    return false;
-                }
-
-                return std.mem.eql(u8, a_string.chars, b_string.chars);
-            },
+            .obj => asObj(a) == asObj(b),
         };
     }
 };

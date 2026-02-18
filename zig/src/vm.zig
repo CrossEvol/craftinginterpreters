@@ -1,15 +1,17 @@
 const std = @import("std");
 
-const asString = @import("object.zig").asString;
 const Chunk = @import("chunk.zig").Chunk;
 const common = @import("common.zig");
 const Compiler = @import("compiler.zig").Compiler;
 const disassembleInstruction = @import("debug.zig").disassembleInstruction;
-const isString = @import("object.zig").isString;
-const Obj = @import("object.zig").Obj;
-const ObjString = @import("object.zig").ObjString;
+const ObjectNsp = @import("object.zig");
+const asString = ObjectNsp.asString;
+const isString = ObjectNsp.isString;
+const Obj = ObjectNsp.Obj;
+const ObjString = ObjectNsp.ObjString;
 const OpCode = @import("chunk.zig").OpCode;
 const printValue = @import("value.zig").printValue;
+const Table = @import("table.zig").Table;
 const Value = @import("value.zig").Value;
 const isNumber = Value.isNumber;
 const objVal = Value.objVal;
@@ -44,6 +46,7 @@ pub const VM = struct {
     chunk: *Chunk,
     ip: usize,
     stack: std.ArrayList(Value),
+    strings: Table,
     objects: ?*Obj,
     allocator: std.mem.Allocator,
 
@@ -54,12 +57,14 @@ pub const VM = struct {
             .chunk = undefined,
             .ip = 0,
             .stack = stack,
+            .strings = Table.init(allocator),
             .objects = null,
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *VM) void {
+        self.strings.deinit();
         self.stack.deinit(self.allocator);
         self.freeObjects();
     }
@@ -68,9 +73,13 @@ pub const VM = struct {
         var option_object = self.objects;
         while (option_object != null) {
             if (option_object) |object| {
-                const next = object.next;
+                const option_next = object.next;
                 self.freeObject(object);
-                option_object = next;
+                if (option_next) |next| {
+                    option_object = next;
+                } else {
+                    break;
+                }
             }
         }
     }
@@ -129,6 +138,7 @@ pub const VM = struct {
         chunk.* = try Chunk.init(self.allocator);
 
         const compiler = try self.allocator.create(Compiler);
+        defer self.allocator.destroy(compiler);
         compiler.* = Compiler.init(self);
         if (!compiler.compile(source, chunk)) {
             return .INTERPRET_COMPILE_ERROR;
@@ -294,34 +304,46 @@ pub const VM = struct {
         try self.push(objVal(result.asObj()));
     }
 
+    fn hashString(key: []const u8) u32 {
+        var hash: u32 = 2166136261;
+        for (key) |bit| {
+            hash ^= bit;
+            hash *%= 16777619;
+        }
+        return hash;
+    }
+
+    fn allocateString(self: *VM, chars: []const u8, hash: u32) !*ObjString {
+        const obj_string = try self.allocator.create(ObjString);
+        obj_string.* = ObjString.init(self.objects, chars, hash);
+        self.objects = &obj_string.obj;
+        _ = self.strings.set(obj_string, nil_val);
+        return obj_string;
+    }
+
     /// take ownership of chars
     pub fn takeString(self: *VM, chars: []const u8) !*ObjString {
-        const obj_string = try self.allocator.create(ObjString);
-        obj_string.* = .{
-            .obj = .{
-                .type = .OBJ_STRING,
-                .next = self.objects,
-            },
-            .chars = chars,
-        };
-        self.objects = &obj_string.obj;
+        const hash = hashString(chars);
+        const option_interned = self.strings.findString(chars, hash);
 
-        return obj_string;
+        if (option_interned) |interned| {
+            self.allocator.free(chars);
+            return interned;
+        }
+
+        return self.allocateString(chars, hash);
     }
 
     /// dupe the chars
     pub fn copyString(self: *VM, chars: []const u8) !*ObjString {
-        const heap_chars = try self.allocator.dupe(u8, chars);
-        const obj_string = try self.allocator.create(ObjString);
-        obj_string.* = .{
-            .obj = .{
-                .type = .OBJ_STRING,
-                .next = self.objects,
-            },
-            .chars = heap_chars,
-        };
-        self.objects = &obj_string.obj;
+        const hash = hashString(chars);
+        const option_interned = self.strings.findString(chars, hash);
 
-        return obj_string;
+        if (option_interned) |interned| {
+            return interned;
+        }
+
+        const heap_chars = try self.allocator.dupe(u8, chars);
+        return self.allocateString(heap_chars, hash);
     }
 };
