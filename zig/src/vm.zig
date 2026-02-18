@@ -1,14 +1,20 @@
 const std = @import("std");
 
+const asString = @import("object.zig").asString;
 const Chunk = @import("chunk.zig").Chunk;
 const common = @import("common.zig");
 const Compiler = @import("compiler.zig").Compiler;
 const disassembleInstruction = @import("debug.zig").disassembleInstruction;
+const isString = @import("object.zig").isString;
+const Obj = @import("object.zig").Obj;
+const ObjString = @import("object.zig").ObjString;
 const OpCode = @import("chunk.zig").OpCode;
 const printValue = @import("value.zig").printValue;
 const Value = @import("value.zig").Value;
 const isNumber = Value.isNumber;
+const objVal = Value.objVal;
 const isNil = Value.isNil;
+const asObj = Value.asObj;
 const isBool = Value.isBool;
 const asBool = Value.asBool;
 const asNumber = Value.asNumber;
@@ -26,18 +32,19 @@ const InterpretResult = enum {
 };
 
 const BinaryOp = enum {
-    add, // +
-    sub, // -
-    mul, // *
-    div, // div
-    greater, // >
-    less, // <
+    @"+", // +
+    @"-", // -
+    @"*", // *
+    @"/", // div
+    @">", // >
+    @"<", // <
 };
 
 pub const VM = struct {
     chunk: *Chunk,
     ip: usize,
     stack: std.ArrayList(Value),
+    objects: ?*Obj,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator) !VM {
@@ -47,16 +54,39 @@ pub const VM = struct {
             .chunk = undefined,
             .ip = 0,
             .stack = stack,
+            .objects = null,
             .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *VM) void {
         self.stack.deinit(self.allocator);
+        self.freeObjects();
+    }
+
+    fn freeObjects(self: *VM) void {
+        var option_object = self.objects;
+        while (option_object != null) {
+            if (option_object) |object| {
+                const next = object.next;
+                self.freeObject(object);
+                option_object = next;
+            }
+        }
+    }
+
+    fn freeObject(self: *VM, object: *Obj) void {
+        switch (object.type) {
+            .OBJ_STRING => {
+                const string = asString(objVal(object));
+                self.allocator.free(string.chars);
+                self.allocator.destroy(string);
+            },
+        }
     }
 
     fn resetStack(self: *VM) void {
-        self.stack.clearAndFree(self.allocator);
+        self.stack.clearRetainingCapacity();
         self.ip = 0;
     }
 
@@ -78,7 +108,6 @@ pub const VM = struct {
 
         std.debug.print(format ++ "\n", args);
 
-        // TODO: size_t instruction = vm.ip - vm.chunk->code - 1;
         const instruction = self.ip - 1;
         const line = self.chunk.lines.items[instruction];
         std.debug.print("[line {d}] in script\n", .{@as(usize, @intCast(line))});
@@ -100,7 +129,7 @@ pub const VM = struct {
         chunk.* = try Chunk.init(self.allocator);
 
         const compiler = try self.allocator.create(Compiler);
-        compiler.* = Compiler.init();
+        compiler.* = Compiler.init(self);
         if (!compiler.compile(source, chunk)) {
             return .INTERPRET_COMPILE_ERROR;
         }
@@ -141,37 +170,44 @@ pub const VM = struct {
                     try self.push(boolVal(valuesEqual(a, b)));
                 },
                 .OP_GREATER => {
-                    const result = try self.binaryOp(.greater);
+                    const result = try self.binaryOp(.@">");
                     if (result != .INTERPRET_OK) {
                         return result;
                     }
                 },
                 .OP_LESS => {
-                    const result = try self.binaryOp(.less);
+                    const result = try self.binaryOp(.@"<");
                     if (result != .INTERPRET_OK) {
                         return result;
                     }
                 },
                 .OP_ADD => {
-                    const result = try self.binaryOp(.add);
-                    if (result != .INTERPRET_OK) {
-                        return result;
+                    if (isString(self.peek(0)) and isString(self.peek(1))) {
+                        try self.concatenate();
+                    } else if (isNumber(self.peek(0)) and isNumber(self.peek(1))) {
+                        const b = asNumber(self.pop());
+                        const a = asNumber(self.pop());
+                        const value = numberVal(a + b);
+                        try self.push(value);
+                    } else {
+                        self.runtimeError("Operands must be two numbers or two strings.", .{});
+                        return .INTERPRET_RUNTIME_ERROR;
                     }
                 },
                 .OP_SUBTRACT => {
-                    const result = try self.binaryOp(.sub);
+                    const result = try self.binaryOp(.@"-");
                     if (result != .INTERPRET_OK) {
                         return result;
                     }
                 },
                 .OP_MULTIPLY => {
-                    const result = try self.binaryOp(.mul);
+                    const result = try self.binaryOp(.@"*");
                     if (result != .INTERPRET_OK) {
                         return result;
                     }
                 },
                 .OP_DIVIDE => {
-                    const result = try self.binaryOp(.div);
+                    const result = try self.binaryOp(.@"/");
                     if (result != .INTERPRET_OK) {
                         return result;
                     }
@@ -217,12 +253,12 @@ pub const VM = struct {
         const b = asNumber(self.pop());
         const a = asNumber(self.pop());
         const result = switch (op) {
-            .add => numberVal(a + b),
-            .sub => numberVal(a - b),
-            .mul => numberVal(a * b),
-            .div => numberVal(a / b),
-            .greater => boolVal(a > b),
-            .less => boolVal(a < b),
+            .@"+" => numberVal(a + b),
+            .@"-" => numberVal(a - b),
+            .@"*" => numberVal(a * b),
+            .@"/" => numberVal(a / b),
+            .@">" => boolVal(a > b),
+            .@"<" => boolVal(a < b),
         };
         try self.push(result);
 
@@ -246,5 +282,46 @@ pub const VM = struct {
 
     fn isFalsy(value: Value) bool {
         return isNil(value) or (isBool(value) and !asBool(value));
+    }
+
+    fn concatenate(self: *VM) !void {
+        const b = asString(self.pop());
+        const a = asString(self.pop());
+
+        const chars = try std.mem.concat(self.allocator, u8, &.{ a.chars, b.chars });
+
+        const result = try self.takeString(chars);
+        try self.push(objVal(result.asObj()));
+    }
+
+    /// take ownership of chars
+    pub fn takeString(self: *VM, chars: []const u8) !*ObjString {
+        const obj_string = try self.allocator.create(ObjString);
+        obj_string.* = .{
+            .obj = .{
+                .type = .OBJ_STRING,
+                .next = self.objects,
+            },
+            .chars = chars,
+        };
+        self.objects = &obj_string.obj;
+
+        return obj_string;
+    }
+
+    /// dupe the chars
+    pub fn copyString(self: *VM, chars: []const u8) !*ObjString {
+        const heap_chars = try self.allocator.dupe(u8, chars);
+        const obj_string = try self.allocator.create(ObjString);
+        obj_string.* = .{
+            .obj = .{
+                .type = .OBJ_STRING,
+                .next = self.objects,
+            },
+            .chars = heap_chars,
+        };
+        self.objects = &obj_string.obj;
+
+        return obj_string;
     }
 };

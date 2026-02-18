@@ -1,15 +1,22 @@
 const std = @import("std");
 
+const asString = @import("object.zig").asString;
+const Obj = @import("object.zig").Obj;
+const ObjString = @import("object.zig").ObjString;
+const printObject = @import("object.zig").printObject;
+
 const ValueType = enum {
     bool,
     nil, // [user-types]
     number,
+    obj,
 };
 
 pub const Value = union(ValueType) {
     bool: bool,
     nil: void,
     number: f64,
+    obj: *Obj,
 
     pub inline fn isBool(value: Value) bool {
         return switch (value) {
@@ -32,12 +39,23 @@ pub const Value = union(ValueType) {
         };
     }
 
+    pub inline fn isObj(value: Value) bool {
+        return switch (value) {
+            .obj => true,
+            else => false,
+        };
+    }
+
     pub inline fn asBool(value: Value) bool {
         return value.bool;
     }
 
     pub inline fn asNumber(value: Value) f64 {
         return value.number;
+    }
+
+    pub inline fn asObj(value: Value) *Obj {
+        return value.obj;
     }
 
     pub fn boolVal(value: bool) Value {
@@ -60,6 +78,12 @@ pub const Value = union(ValueType) {
         };
     }
 
+    pub fn objVal(object: *Obj) Value {
+        return .{
+            .obj = object,
+        };
+    }
+
     pub fn valuesEqual(a: Value, b: Value) bool {
         if (std.meta.activeTag(a) != std.meta.activeTag(b)) {
             return false;
@@ -69,6 +93,16 @@ pub const Value = union(ValueType) {
             .bool => a.asBool() == b.asBool(),
             .nil => true,
             .number => a.asNumber() == b.asNumber(),
+            .obj => {
+                const a_string = asString(a);
+                const b_string = asString(b);
+
+                if (a_string.chars.len != b_string.chars.len) {
+                    return false;
+                }
+
+                return std.mem.eql(u8, a_string.chars, b_string.chars);
+            },
         };
     }
 };
@@ -116,6 +150,9 @@ pub fn printValue(value: Value) void {
         },
         .number => {
             std.debug.print("{d}", .{value.asNumber()});
+        },
+        .obj => {
+            printObject(value);
         },
     }
 }

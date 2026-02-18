@@ -1,14 +1,17 @@
 const std = @import("std");
 
+const asObj = @import("value.zig").Value.asObj;
 const Chunk = @import("chunk.zig").Chunk;
 const common = @import("common.zig");
 const disassembleChunk = @import("debug.zig").disassembleChunk;
+const objVal = @import("value.zig").Value.objVal;
 const OpCode = @import("chunk.zig").OpCode;
 const Scanner = @import("scanner.zig").Scanner;
 const Token = @import("scanner.zig").Token;
 const TokenType = @import("scanner.zig").TokenType;
 const Value = @import("value.zig").Value;
 const numberVal = Value.numberVal;
+const VM = @import("vm.zig").VM;
 
 const Parser = struct {
     current: Token,
@@ -42,16 +45,16 @@ const Precedence = enum {
 
 pub const Compiler = struct {
     scanner: Scanner,
-
     compiling_chunk: *Chunk,
-
     parser: Parser,
+    vm: *VM, // borrowed
 
-    pub fn init() Compiler {
+    pub fn init(vm: *VM) Compiler {
         return .{
             .scanner = undefined,
             .compiling_chunk = undefined,
             .parser = Parser.init(),
+            .vm = vm,
         };
     }
 
@@ -92,7 +95,7 @@ pub const Compiler = struct {
         .TOKEN_LESS = ParseRule.init(null, binary, .PREC_COMPARISON),
         .TOKEN_LESS_EQUAL = ParseRule.init(null, binary, .PREC_COMPARISON),
         .TOKEN_IDENTIFIER = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_STRING = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_STRING = ParseRule.init(string, null, .PREC_NONE),
         .TOKEN_NUMBER = ParseRule.init(number, null, .PREC_NONE),
         .TOKEN_AND = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_CLASS = ParseRule.init(null, null, .PREC_NONE),
@@ -287,6 +290,18 @@ pub const Compiler = struct {
             @panic(@errorName(err));
         };
         self.emitConstant(numberVal(value));
+    }
+
+    fn string(self: *Compiler) void {
+        const lexeme = self.parser.previous.lexeme;
+        var obj_string = self.vm.copyString(lexeme[1 .. lexeme.len - 1]) catch |err| {
+            std.debug.print("{s}", .{@errorName(err)});
+            @panic(@errorName(err));
+        };
+        _ = &obj_string;
+
+        const obj_constant = objVal(obj_string.asObj());
+        self.emitConstant(obj_constant);
     }
 
     fn unary(self: *Compiler) void {
