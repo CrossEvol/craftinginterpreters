@@ -46,6 +46,7 @@ pub const VM = struct {
     chunk: *Chunk,
     ip: usize,
     stack: std.ArrayList(Value),
+    globals: Table,
     strings: Table,
     objects: ?*Obj,
     allocator: std.mem.Allocator,
@@ -57,6 +58,7 @@ pub const VM = struct {
             .chunk = undefined,
             .ip = 0,
             .stack = stack,
+            .globals = Table.init(allocator),
             .strings = Table.init(allocator),
             .objects = null,
             .allocator = allocator,
@@ -64,6 +66,7 @@ pub const VM = struct {
     }
 
     pub fn deinit(self: *VM) void {
+        self.globals.deinit();
         self.strings.deinit();
         self.stack.deinit(self.allocator);
         self.freeObjects();
@@ -169,15 +172,41 @@ pub const VM = struct {
             switch (instruction) {
                 .OP_CONSTANT => {
                     const constant = self.readConstant();
-                    try self.push(constant);
+                    self.push(constant);
                 },
-                .OP_NIL => try self.push(nil_val),
-                .OP_TRUE => try self.push(boolVal(true)),
-                .OP_FALSE => try self.push(boolVal(false)),
+                .OP_NIL => self.push(nil_val),
+                .OP_TRUE => self.push(boolVal(true)),
+                .OP_FALSE => self.push(boolVal(false)),
+                .OP_POP => _ = self.pop(),
+                .OP_GET_GLOBAL => {
+                    const name = self.readString();
+                    const value, const ok = self.globals.get(name);
+                    if (!ok) {
+                        self.runtimeError("Undefined variable '{s}'.", .{name.chars});
+                        return .INTERPRET_RUNTIME_ERROR;
+                    }
+                    self.push(value);
+                },
+                .OP_DEFINE_GLOBAL => {
+                    const name = self.readString();
+                    const value = self.peek(0);
+                    _ = self.globals.set(name, value);
+                    _ = self.pop();
+                },
+                .OP_SET_GLOBAL => {
+                    const name = self.readString();
+                    const value = self.peek(0);
+                    const is_new = self.globals.set(name, value);
+                    if (is_new) {
+                        _ = self.globals.delete(name); // [delete]
+                        self.runtimeError("Undefined variable '{s}'.", .{name.chars});
+                        return .INTERPRET_RUNTIME_ERROR;
+                    }
+                },
                 .OP_EQUAL => {
                     const b = self.pop();
                     const a = self.pop();
-                    try self.push(boolVal(valuesEqual(a, b)));
+                    self.push(boolVal(valuesEqual(a, b)));
                 },
                 .OP_GREATER => {
                     const result = try self.binaryOp(.@">");
@@ -198,7 +227,7 @@ pub const VM = struct {
                         const b = asNumber(self.pop());
                         const a = asNumber(self.pop());
                         const value = numberVal(a + b);
-                        try self.push(value);
+                        self.push(value);
                     } else {
                         self.runtimeError("Operands must be two numbers or two strings.", .{});
                         return .INTERPRET_RUNTIME_ERROR;
@@ -224,7 +253,7 @@ pub const VM = struct {
                 },
                 .OP_NOT => {
                     const value = boolVal(isFalsy(self.pop()));
-                    try self.push(value);
+                    self.push(value);
                 },
                 .OP_NEGATE => {
                     if (!isNumber(self.peek(0))) {
@@ -232,11 +261,14 @@ pub const VM = struct {
                         return .INTERPRET_RUNTIME_ERROR;
                     }
                     const value = numberVal(-asNumber(self.pop()));
-                    try self.push(value);
+                    self.push(value);
                 },
-                .OP_RETURN => {
+                .OP_PRINT => {
                     printValue(self.pop());
                     std.debug.print("\n", .{});
+                },
+                .OP_RETURN => {
+                    // Exit interpreter.
                     return .INTERPRET_OK;
                 },
                 else => {},
@@ -252,6 +284,10 @@ pub const VM = struct {
 
     fn readConstant(self: *VM) Value {
         return self.chunk.constants.values.items[self.readByte()];
+    }
+
+    fn readString(self: *VM) *ObjString {
+        return asString(self.readConstant());
     }
 
     fn binaryOp(self: *VM, comptime op: BinaryOp) !InterpretResult {
@@ -270,13 +306,16 @@ pub const VM = struct {
             .@">" => boolVal(a > b),
             .@"<" => boolVal(a < b),
         };
-        try self.push(result);
+        self.push(result);
 
         return .INTERPRET_OK;
     }
 
-    pub fn push(self: *VM, value: Value) !void {
-        try self.stack.append(self.allocator, value);
+    pub fn push(self: *VM, value: Value) void {
+        self.stack.append(self.allocator, value) catch |err| {
+            std.debug.print("{s}", .{@errorName(err)});
+            @panic("OOM");
+        };
     }
 
     pub fn pop(self: *VM) Value {
@@ -301,7 +340,7 @@ pub const VM = struct {
         const chars = try std.mem.concat(self.allocator, u8, &.{ a.chars, b.chars });
 
         const result = try self.takeString(chars);
-        try self.push(objVal(result.asObj()));
+        self.push(objVal(result.asObj()));
     }
 
     fn hashString(key: []const u8) u32 {
@@ -313,8 +352,11 @@ pub const VM = struct {
         return hash;
     }
 
-    fn allocateString(self: *VM, chars: []const u8, hash: u32) !*ObjString {
-        const obj_string = try self.allocator.create(ObjString);
+    fn allocateString(self: *VM, chars: []const u8, hash: u32) *ObjString {
+        const obj_string = self.allocator.create(ObjString) catch |err| {
+            std.debug.print("{s}", .{@errorName(err)});
+            @panic("OOM");
+        };
         obj_string.* = ObjString.init(self.objects, chars, hash);
         self.objects = &obj_string.obj;
         _ = self.strings.set(obj_string, nil_val);
@@ -335,7 +377,7 @@ pub const VM = struct {
     }
 
     /// dupe the chars
-    pub fn copyString(self: *VM, chars: []const u8) !*ObjString {
+    pub fn copyString(self: *VM, chars: []const u8) *ObjString {
         const hash = hashString(chars);
         const option_interned = self.strings.findString(chars, hash);
 
@@ -343,7 +385,10 @@ pub const VM = struct {
             return interned;
         }
 
-        const heap_chars = try self.allocator.dupe(u8, chars);
+        const heap_chars = self.allocator.dupe(u8, chars) catch |err| {
+            std.debug.print("{s}", .{@errorName(err)});
+            @panic(@errorName(err));
+        };
         return self.allocateString(heap_chars, hash);
     }
 };

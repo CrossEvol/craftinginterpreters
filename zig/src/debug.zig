@@ -45,6 +45,10 @@ pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
         .OP_NIL => return simpleInstruction("OP_NIL", offset),
         .OP_TRUE => return simpleInstruction("OP_TRUE", offset),
         .OP_FALSE => return simpleInstruction("OP_FALSE", offset),
+        .OP_POP => return simpleInstruction("OP_POP", offset),
+        .OP_GET_GLOBAL => return constantInstruction("OP_GET_GLOBAL", chunk, offset),
+        .OP_DEFINE_GLOBAL => return constantInstruction("OP_DEFINE_GLOBAL", chunk, offset),
+        .OP_SET_GLOBAL => return constantInstruction("OP_SET_GLOBAL", chunk, offset),
         .OP_EQUAL => return simpleInstruction("OP_EQUAL", offset),
         .OP_GREATER => return simpleInstruction("OP_GREATER", offset),
         .OP_LESS => return simpleInstruction("OP_LESS", offset),
@@ -54,6 +58,7 @@ pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
         .OP_DIVIDE => return simpleInstruction("OP_DIVIDE", offset),
         .OP_NOT => return simpleInstruction("OP_NOT", offset),
         .OP_NEGATE => return simpleInstruction("OP_NEGATE", offset),
+        .OP_PRINT => return simpleInstruction("OP_PRINT", offset),
         .OP_RETURN => return simpleInstruction("OP_RETURN", offset),
         else => {
             std.debug.print("Unknown opcode {d}\n", .{instruction});

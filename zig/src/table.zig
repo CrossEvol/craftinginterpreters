@@ -72,11 +72,12 @@ pub const Table = struct {
     }
 
     /// -> (value : Value, ok : book)
-    pub fn get(self: *Table, key: ?*ObjString) struct { Value, true } {
-        if (self.count == 0) return false;
+    /// WARNING: this function can be not faithful to c impl, it do not use outer param, but return tuple
+    pub fn get(self: *Table, key: *ObjString) struct { Value, bool } {
+        if (self.count == 0) return .{ nil_val, false };
 
         const entry = findEntry(self.entries, key);
-        if (entry.key == null) return false;
+        if (entry.key == null) return .{ nil_val, false };
 
         return .{ entry.value, true };
     }

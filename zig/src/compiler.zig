@@ -58,7 +58,7 @@ pub const Compiler = struct {
         };
     }
 
-    const ParseFn = *const fn (*Compiler) void;
+    const ParseFn = *const fn (*Compiler, can_assign: bool) void;
 
     const ParseRule = struct {
         prefix: ?ParseFn,
@@ -73,49 +73,6 @@ pub const Compiler = struct {
             };
         }
     };
-
-    const rules = std.EnumArray(TokenType, ParseRule).init(.{
-        .TOKEN_LEFT_PAREN = ParseRule.init(grouping, null, .PREC_NONE),
-        .TOKEN_RIGHT_PAREN = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_LEFT_BRACE = ParseRule.init(null, null, .PREC_NONE), // [big]
-        .TOKEN_RIGHT_BRACE = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_COMMA = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_DOT = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_MINUS = ParseRule.init(unary, binary, .PREC_TERM),
-        .TOKEN_PLUS = ParseRule.init(null, binary, .PREC_TERM),
-        .TOKEN_SEMICOLON = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_SLASH = ParseRule.init(null, binary, .PREC_FACTOR),
-        .TOKEN_STAR = ParseRule.init(null, binary, .PREC_FACTOR),
-        .TOKEN_BANG = ParseRule.init(unary, null, .PREC_NONE),
-        .TOKEN_BANG_EQUAL = ParseRule.init(null, binary, .PREC_EQUALITY),
-        .TOKEN_EQUAL = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_EQUAL_EQUAL = ParseRule.init(null, binary, .PREC_EQUALITY),
-        .TOKEN_GREATER = ParseRule.init(null, binary, .PREC_COMPARISON),
-        .TOKEN_GREATER_EQUAL = ParseRule.init(null, binary, .PREC_COMPARISON),
-        .TOKEN_LESS = ParseRule.init(null, binary, .PREC_COMPARISON),
-        .TOKEN_LESS_EQUAL = ParseRule.init(null, binary, .PREC_COMPARISON),
-        .TOKEN_IDENTIFIER = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_STRING = ParseRule.init(string, null, .PREC_NONE),
-        .TOKEN_NUMBER = ParseRule.init(number, null, .PREC_NONE),
-        .TOKEN_AND = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_CLASS = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_ELSE = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_FALSE = ParseRule.init(literal, null, .PREC_NONE),
-        .TOKEN_FOR = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_FUN = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_IF = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_NIL = ParseRule.init(literal, null, .PREC_NONE),
-        .TOKEN_OR = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_PRINT = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_RETURN = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_SUPER = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_THIS = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_TRUE = ParseRule.init(literal, null, .PREC_NONE),
-        .TOKEN_VAR = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_WHILE = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_ERROR = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_EOF = ParseRule.init(null, null, .PREC_NONE),
-    });
 
     fn currentChunk(self: *Compiler) *Chunk {
         return self.compiling_chunk;
@@ -164,6 +121,16 @@ pub const Compiler = struct {
         }
 
         self.errorAtCurrent(message);
+    }
+
+    fn check(self: *Compiler, @"type": TokenType) bool {
+        return self.parser.current.type == @"type";
+    }
+
+    fn match(self: *Compiler, @"type": TokenType) bool {
+        if (!self.check(@"type")) return false;
+        self.advance();
+        return true;
     }
 
     /// (byte : u8 | OpCode)
@@ -224,33 +191,8 @@ pub const Compiler = struct {
         }
     }
 
-    fn expression(self: *Compiler) void {
-        self.parsePrecedence(.PREC_ASSIGNMENT);
-    }
-
-    fn getRule(@"type": TokenType) ParseRule {
-        return rules.get(@"type");
-    }
-
-    fn parsePrecedence(self: *Compiler, precedence: Precedence) void {
-        self.advance();
-        const option_prefix_rule = getRule(self.parser.previous.type).prefix;
-        if (option_prefix_rule) |prefix_rule| {
-            prefix_rule(self);
-            while (@intFromEnum(precedence) <= @intFromEnum(getRule(self.parser.current.type).precedence)) {
-                self.advance();
-                const option_infix_rule = getRule(self.parser.previous.type).infix;
-                if (option_infix_rule) |infix_rule| {
-                    infix_rule(self);
-                }
-            }
-        } else {
-            self.@"error"("Expect expression.");
-            return;
-        }
-    }
-
-    fn binary(self: *Compiler) void {
+    fn binary(self: *Compiler, can_assign: bool) void {
+        _ = can_assign;
         const operator_type = self.parser.previous.type;
         const rule = getRule(operator_type);
         self.parsePrecedence(@enumFromInt(@intFromEnum(rule.precedence) + 1));
@@ -270,7 +212,21 @@ pub const Compiler = struct {
         }
     }
 
-    fn literal(self: *Compiler) void {
+    fn identifierConstant(self: *Compiler, name: Token) u8 {
+        return self.makeConstant(objVal(self.vm.copyString(name.lexeme).asObj()));
+    }
+
+    fn parseVariable(self: *Compiler, error_message: []const u8) u8 {
+        self.consume(.TOKEN_IDENTIFIER, error_message);
+        return self.identifierConstant(self.parser.previous);
+    }
+
+    fn defineVariable(self: *Compiler, global: u8) void {
+        self.emitBytes(OpCode.OP_DEFINE_GLOBAL, global);
+    }
+
+    fn literal(self: *Compiler, can_assign: bool) void {
+        _ = can_assign;
         switch (self.parser.previous.type) {
             .TOKEN_FALSE => self.emitByte(OpCode.OP_FALSE),
             .TOKEN_NIL => self.emitByte(OpCode.OP_NIL),
@@ -279,12 +235,14 @@ pub const Compiler = struct {
         }
     }
 
-    fn grouping(self: *Compiler) void {
+    fn grouping(self: *Compiler, can_assign: bool) void {
+        _ = can_assign;
         self.expression();
         self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
     }
 
-    fn number(self: *Compiler) void {
+    fn number(self: *Compiler, can_assign: bool) void {
+        _ = can_assign;
         const value = std.fmt.parseFloat(f64, self.parser.previous.lexeme) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic(@errorName(err));
@@ -292,19 +250,33 @@ pub const Compiler = struct {
         self.emitConstant(numberVal(value));
     }
 
-    fn string(self: *Compiler) void {
+    fn string(self: *Compiler, can_assign: bool) void {
+        _ = can_assign;
         const lexeme = self.parser.previous.lexeme;
-        var obj_string = self.vm.copyString(lexeme[1 .. lexeme.len - 1]) catch |err| {
-            std.debug.print("{s}", .{@errorName(err)});
-            @panic(@errorName(err));
-        };
+        var obj_string = self.vm.copyString(lexeme[1 .. lexeme.len - 1]);
         _ = &obj_string;
 
         const obj_constant = objVal(obj_string.asObj());
         self.emitConstant(obj_constant);
     }
 
-    fn unary(self: *Compiler) void {
+    fn namedVariable(self: *Compiler, name: Token, can_assign: bool) void {
+        const arg = self.identifierConstant(name);
+
+        if (can_assign and self.match(.TOKEN_EQUAL)) {
+            self.expression();
+            self.emitBytes(OpCode.OP_SET_GLOBAL, arg);
+        } else {
+            self.emitBytes(OpCode.OP_GET_GLOBAL, arg);
+        }
+    }
+
+    fn variable(self: *Compiler, can_assign: bool) void {
+        self.namedVariable(self.parser.previous, can_assign);
+    }
+
+    fn unary(self: *Compiler, can_assign: bool) void {
+        _ = can_assign;
         const operator_type = self.parser.previous.type;
 
         // Compile the operand.
@@ -318,6 +290,148 @@ pub const Compiler = struct {
         }
     }
 
+    const rules = std.EnumArray(TokenType, ParseRule).init(.{
+        .TOKEN_LEFT_PAREN = ParseRule.init(grouping, null, .PREC_NONE),
+        .TOKEN_RIGHT_PAREN = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_LEFT_BRACE = ParseRule.init(null, null, .PREC_NONE), // [big]
+        .TOKEN_RIGHT_BRACE = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_COMMA = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_DOT = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_MINUS = ParseRule.init(unary, binary, .PREC_TERM),
+        .TOKEN_PLUS = ParseRule.init(null, binary, .PREC_TERM),
+        .TOKEN_SEMICOLON = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_SLASH = ParseRule.init(null, binary, .PREC_FACTOR),
+        .TOKEN_STAR = ParseRule.init(null, binary, .PREC_FACTOR),
+        .TOKEN_BANG = ParseRule.init(unary, null, .PREC_NONE),
+        .TOKEN_BANG_EQUAL = ParseRule.init(null, binary, .PREC_EQUALITY),
+        .TOKEN_EQUAL = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_EQUAL_EQUAL = ParseRule.init(null, binary, .PREC_EQUALITY),
+        .TOKEN_GREATER = ParseRule.init(null, binary, .PREC_COMPARISON),
+        .TOKEN_GREATER_EQUAL = ParseRule.init(null, binary, .PREC_COMPARISON),
+        .TOKEN_LESS = ParseRule.init(null, binary, .PREC_COMPARISON),
+        .TOKEN_LESS_EQUAL = ParseRule.init(null, binary, .PREC_COMPARISON),
+        .TOKEN_IDENTIFIER = ParseRule.init(variable, null, .PREC_NONE),
+        .TOKEN_STRING = ParseRule.init(string, null, .PREC_NONE),
+        .TOKEN_NUMBER = ParseRule.init(number, null, .PREC_NONE),
+        .TOKEN_AND = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_CLASS = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_ELSE = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_FALSE = ParseRule.init(literal, null, .PREC_NONE),
+        .TOKEN_FOR = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_FUN = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_IF = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_NIL = ParseRule.init(literal, null, .PREC_NONE),
+        .TOKEN_OR = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_PRINT = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_RETURN = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_SUPER = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_THIS = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_TRUE = ParseRule.init(literal, null, .PREC_NONE),
+        .TOKEN_VAR = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_WHILE = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_ERROR = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_EOF = ParseRule.init(null, null, .PREC_NONE),
+    });
+
+    fn parsePrecedence(self: *Compiler, precedence: Precedence) void {
+        self.advance();
+        const option_prefix_rule = getRule(self.parser.previous.type).prefix;
+        if (option_prefix_rule) |prefix_rule| {
+            const can_assign = @intFromEnum(precedence) <= @intFromEnum(Precedence.PREC_ASSIGNMENT);
+
+            prefix_rule(self, can_assign);
+
+            while (@intFromEnum(precedence) <= @intFromEnum(getRule(self.parser.current.type).precedence)) {
+                self.advance();
+                const option_infix_rule = getRule(self.parser.previous.type).infix;
+                if (option_infix_rule) |infix_rule| {
+                    infix_rule(self, can_assign);
+                }
+            }
+
+            if (can_assign and self.match(.TOKEN_EQUAL)) {
+                self.@"error"("Invalid assignment target.");
+            }
+        } else {
+            self.@"error"("Expect expression.");
+            return;
+        }
+    }
+
+    fn getRule(@"type": TokenType) ParseRule {
+        return rules.get(@"type");
+    }
+
+    fn expression(self: *Compiler) void {
+        self.parsePrecedence(.PREC_ASSIGNMENT);
+    }
+
+    fn varDeclaration(self: *Compiler) void {
+        const global = self.parseVariable("Expect variable name.");
+
+        if (self.match(.TOKEN_EQUAL)) {
+            self.expression();
+        } else {
+            self.emitByte(OpCode.OP_NIL);
+        }
+
+        self.consume(.TOKEN_SEMICOLON, "Expect ';' after variable declaration.");
+
+        self.defineVariable(global);
+    }
+
+    fn expressionStatement(self: *Compiler) void {
+        self.expression();
+        self.consume(.TOKEN_SEMICOLON, "Expect ';' after expression.");
+        self.emitByte(OpCode.OP_POP);
+    }
+
+    fn printStatement(self: *Compiler) void {
+        self.expression();
+        self.consume(.TOKEN_SEMICOLON, "Expect ';' after value.");
+        self.emitByte(OpCode.OP_PRINT);
+    }
+
+    fn synchronize(self: *Compiler) void {
+        self.parser.panic_mode = false;
+
+        while (self.parser.current.type != .TOKEN_EOF) {
+            if (self.parser.previous.type == .TOKEN_SEMICOLON) return;
+
+            switch (self.parser.current.type) {
+                .TOKEN_CLASS,
+                .TOKEN_FUN,
+                .TOKEN_VAR,
+                .TOKEN_FOR,
+                .TOKEN_IF,
+                .TOKEN_WHILE,
+                .TOKEN_PRINT,
+                .TOKEN_RETURN,
+                => return,
+                else => {}, // Do nothing.
+            }
+
+            self.advance();
+        }
+    }
+
+    fn declaration(self: *Compiler) void {
+        if (self.match(.TOKEN_VAR)) {
+            self.varDeclaration();
+        } else {
+            self.statement();
+        }
+        if (self.parser.panic_mode) self.synchronize();
+    }
+
+    fn statement(self: *Compiler) void {
+        if (self.match(.TOKEN_PRINT)) {
+            self.printStatement();
+        } else {
+            self.expressionStatement();
+        }
+    }
+
     pub fn compile(self: *Compiler, source: []const u8, chunk: *Chunk) bool {
         self.scanner = Scanner.init(source);
         self.compiling_chunk = chunk;
@@ -326,10 +440,12 @@ pub const Compiler = struct {
         self.parser.panic_mode = false;
 
         self.advance();
-        self.expression();
-        self.consume(.TOKEN_EOF, "Expect end of expression.");
-        self.endCompiler();
 
+        while (!self.match(.TOKEN_EOF)) {
+            self.declaration();
+        }
+
+        self.endCompiler();
         return !self.parser.had_error;
     }
 };
