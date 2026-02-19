@@ -178,6 +178,14 @@ pub const VM = struct {
                 .OP_TRUE => self.push(boolVal(true)),
                 .OP_FALSE => self.push(boolVal(false)),
                 .OP_POP => _ = self.pop(),
+                .OP_GET_LOCAL => {
+                    const slot = self.readByte();
+                    self.push(self.stack.items[slot]); // [slot]
+                },
+                .OP_SET_LOCAL => {
+                    const slot = self.readByte();
+                    self.stack.items[slot] = self.peek(0);
+                },
                 .OP_GET_GLOBAL => {
                     const name = self.readString();
                     const value, const ok = self.globals.get(name);

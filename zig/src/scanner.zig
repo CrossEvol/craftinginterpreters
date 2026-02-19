@@ -276,7 +276,7 @@ pub const Scanner = struct {
 
 pub const Token = struct {
     type: TokenType,
-    lexeme: []const u8,
+    lexeme: []const u8, // refer to source
     line: i32,
 
     pub fn init(@"type": TokenType, lexeme: []const u8, line: i32) Token {

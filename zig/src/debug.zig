@@ -28,6 +28,12 @@ fn simpleInstruction(name: []const u8, offset: i32) i32 {
     return offset + 1;
 }
 
+fn byteInstruction(name: []const u8, chunk: *Chunk, offset: i32) i32 {
+    const slot = chunk.code.items[@intCast(offset + 1)];
+    std.debug.print("{s:<16} {d:4}\n", .{ name, slot });
+    return offset + 2;
+}
+
 pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
     std.debug.print("{d:0>4} ", .{offset});
     if (offset > 0 and
@@ -46,6 +52,8 @@ pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
         .OP_TRUE => return simpleInstruction("OP_TRUE", offset),
         .OP_FALSE => return simpleInstruction("OP_FALSE", offset),
         .OP_POP => return simpleInstruction("OP_POP", offset),
+        .OP_GET_LOCAL => return byteInstruction("OP_GET_LOCAL", chunk, offset),
+        .OP_SET_LOCAL => return byteInstruction("OP_SET_LOCAL", chunk, offset),
         .OP_GET_GLOBAL => return constantInstruction("OP_GET_GLOBAL", chunk, offset),
         .OP_DEFINE_GLOBAL => return constantInstruction("OP_DEFINE_GLOBAL", chunk, offset),
         .OP_SET_GLOBAL => return constantInstruction("OP_SET_GLOBAL", chunk, offset),

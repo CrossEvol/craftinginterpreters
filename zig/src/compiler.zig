@@ -3,6 +3,7 @@ const std = @import("std");
 const asObj = @import("value.zig").Value.asObj;
 const Chunk = @import("chunk.zig").Chunk;
 const common = @import("common.zig");
+const UINT8_COUNT = common.UINT8_COUNT;
 const disassembleChunk = @import("debug.zig").disassembleChunk;
 const objVal = @import("value.zig").Value.objVal;
 const OpCode = @import("chunk.zig").OpCode;
@@ -43,7 +44,38 @@ const Precedence = enum {
     PREC_PRIMARY,
 };
 
+const ParseFn = *const fn (*Compiler, can_assign: bool) void;
+
+const ParseRule = struct {
+    prefix: ?ParseFn,
+    infix: ?ParseFn,
+    precedence: Precedence,
+
+    pub fn init(prefix: ?ParseFn, infix: ?ParseFn, precedence: Precedence) ParseRule {
+        return .{
+            .prefix = prefix,
+            .infix = infix,
+            .precedence = precedence,
+        };
+    }
+};
+
+const Local = struct {
+    name: Token,
+    depth: i32,
+
+    pub fn init(name: Token, depth: i32) Local {
+        return .{
+            .name = name,
+            .depth = depth,
+        };
+    }
+};
+
 pub const Compiler = struct {
+    locals: [UINT8_COUNT]Local,
+    local_count: i32,
+    scope_depth: i32,
     scanner: Scanner,
     compiling_chunk: *Chunk,
     parser: Parser,
@@ -51,28 +83,15 @@ pub const Compiler = struct {
 
     pub fn init(vm: *VM) Compiler {
         return .{
+            .locals = undefined,
+            .local_count = 0,
+            .scope_depth = 0,
             .scanner = undefined,
             .compiling_chunk = undefined,
             .parser = Parser.init(),
             .vm = vm,
         };
     }
-
-    const ParseFn = *const fn (*Compiler, can_assign: bool) void;
-
-    const ParseRule = struct {
-        prefix: ?ParseFn,
-        infix: ?ParseFn,
-        precedence: Precedence,
-
-        pub fn init(prefix: ?ParseFn, infix: ?ParseFn, precedence: Precedence) ParseRule {
-            return .{
-                .prefix = prefix,
-                .infix = infix,
-                .precedence = precedence,
-            };
-        }
-    };
 
     fn currentChunk(self: *Compiler) *Chunk {
         return self.compiling_chunk;
@@ -191,6 +210,19 @@ pub const Compiler = struct {
         }
     }
 
+    fn beginScope(self: *Compiler) void {
+        self.scope_depth += 1;
+    }
+
+    fn endScope(self: *Compiler) void {
+        self.scope_depth -= 1;
+
+        while (self.local_count > 0 and self.locals[@intCast(self.local_count - 1)].depth > self.scope_depth) {
+            self.emitByte(OpCode.OP_POP);
+            self.local_count -= 1;
+        }
+    }
+
     fn binary(self: *Compiler, can_assign: bool) void {
         _ = can_assign;
         const operator_type = self.parser.previous.type;
@@ -216,12 +248,74 @@ pub const Compiler = struct {
         return self.makeConstant(objVal(self.vm.copyString(name.lexeme).asObj()));
     }
 
+    fn identifiersEqual(a: Token, b: Token) bool {
+        if (a.lexeme.len != b.lexeme.len) return false;
+        return std.mem.eql(u8, a.lexeme, b.lexeme);
+    }
+
+    fn resolveLocal(self: *Compiler, name: Token) i32 {
+        var i = self.local_count - 1;
+        while (i >= 0) : (i -= 1) {
+            const local = self.locals[@intCast(i)];
+            if (identifiersEqual(name, local.name)) {
+                if (local.depth == -1) {
+                    self.@"error"("Can't read local variable in its own initializer.");
+                }
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    fn addLocal(self: *Compiler, name: Token) void {
+        if (self.local_count == UINT8_COUNT) {
+            self.@"error"("Too many local variables in function.");
+            return;
+        }
+
+        self.locals[@intCast(self.local_count)] = Local.init(name, -1);
+        self.local_count += 1;
+    }
+
+    fn declareVariable(self: *Compiler) void {
+        if (self.scope_depth == 0) return;
+
+        const name = self.parser.previous;
+        var i = self.local_count - 1;
+        while (i >= 0) : (i -= 1) {
+            const local = self.locals[@intCast(i)];
+
+            if (local.depth != -1 and local.depth < self.scope_depth) {
+                break; // [negative]
+            }
+
+            if (identifiersEqual(name, local.name)) {
+                self.@"error"("Already a variable with this name in this scope.");
+            }
+        }
+
+        self.addLocal(name);
+    }
+
     fn parseVariable(self: *Compiler, error_message: []const u8) u8 {
         self.consume(.TOKEN_IDENTIFIER, error_message);
+
+        self.declareVariable();
+        if (self.scope_depth > 0) return 0;
+
         return self.identifierConstant(self.parser.previous);
     }
 
+    fn markInitialized(self: *Compiler) void {
+        self.locals[@intCast(self.local_count - 1)].depth = self.scope_depth;
+    }
+
     fn defineVariable(self: *Compiler, global: u8) void {
+        if (self.scope_depth > 0) {
+            self.markInitialized();
+            return;
+        }
+
         self.emitBytes(OpCode.OP_DEFINE_GLOBAL, global);
     }
 
@@ -261,13 +355,24 @@ pub const Compiler = struct {
     }
 
     fn namedVariable(self: *Compiler, name: Token, can_assign: bool) void {
-        const arg = self.identifierConstant(name);
+        var get_op: OpCode = undefined;
+        var set_op: OpCode = undefined;
+        var arg = self.resolveLocal(name);
+
+        if (arg != -1) {
+            get_op = .OP_GET_LOCAL;
+            set_op = .OP_SET_LOCAL;
+        } else {
+            arg = @intCast(self.identifierConstant(name));
+            get_op = .OP_GET_GLOBAL;
+            set_op = .OP_SET_GLOBAL;
+        }
 
         if (can_assign and self.match(.TOKEN_EQUAL)) {
             self.expression();
-            self.emitBytes(OpCode.OP_SET_GLOBAL, arg);
+            self.emitBytes(set_op, @as(u8, @intCast(arg)));
         } else {
-            self.emitBytes(OpCode.OP_GET_GLOBAL, arg);
+            self.emitBytes(get_op, @as(u8, @intCast(arg)));
         }
     }
 
@@ -366,6 +471,14 @@ pub const Compiler = struct {
         self.parsePrecedence(.PREC_ASSIGNMENT);
     }
 
+    fn block(self: *Compiler) void {
+        while (!self.check(.TOKEN_RIGHT_BRACE) and !self.check(.TOKEN_EOF)) {
+            self.declaration();
+        }
+
+        self.consume(.TOKEN_RIGHT_BRACE, "Expect '}' after block.");
+    }
+
     fn varDeclaration(self: *Compiler) void {
         const global = self.parseVariable("Expect variable name.");
 
@@ -427,6 +540,10 @@ pub const Compiler = struct {
     fn statement(self: *Compiler) void {
         if (self.match(.TOKEN_PRINT)) {
             self.printStatement();
+        } else if (self.match(.TOKEN_LEFT_BRACE)) {
+            self.beginScope();
+            self.block();
+            self.endScope();
         } else {
             self.expressionStatement();
         }
