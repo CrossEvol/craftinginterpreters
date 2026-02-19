@@ -74,25 +74,46 @@ const Local = struct {
     }
 };
 
-pub const Compiler = struct {
+const Kompiler = struct {
     locals: [UINT8_COUNT]Local,
     local_count: i32,
     scope_depth: i32,
-    scanner: Scanner,
-    compiling_chunk: *Chunk,
-    parser: Parser,
-    vm: *VM, // borrowed
 
-    pub fn init(vm: *VM) Compiler {
+    pub fn init() Kompiler {
         return .{
             .locals = undefined,
             .local_count = 0,
             .scope_depth = 0,
+        };
+    }
+};
+
+fn identifiersEqual(a: Token, b: Token) bool {
+    if (a.lexeme.len != b.lexeme.len) return false;
+    return std.mem.eql(u8, a.lexeme, b.lexeme);
+}
+
+pub const Compiler = struct {
+    current: *Kompiler,
+    parser: Parser,
+    scanner: Scanner,
+    vm: *VM,
+    compiling_chunk: *Chunk,
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, vm: *VM) Compiler {
+        return .{
+            .current = undefined,
             .scanner = undefined,
-            .compiling_chunk = undefined,
             .parser = Parser.init(),
             .vm = vm,
+            .compiling_chunk = undefined,
+            .allocator = allocator,
         };
+    }
+
+    pub fn deinit(self: *Compiler) void {
+        self.allocator.destroy(self.current);
     }
 
     fn currentChunk(self: *Compiler) *Chunk {
@@ -244,15 +265,15 @@ pub const Compiler = struct {
     }
 
     fn beginScope(self: *Compiler) void {
-        self.scope_depth += 1;
+        self.current.scope_depth += 1;
     }
 
     fn endScope(self: *Compiler) void {
-        self.scope_depth -= 1;
+        self.current.scope_depth -= 1;
 
-        while (self.local_count > 0 and self.locals[@intCast(self.local_count - 1)].depth > self.scope_depth) {
+        while (self.current.local_count > 0 and self.current.locals[@intCast(self.current.local_count - 1)].depth > self.current.scope_depth) {
             self.emitByte(OpCode.OP_POP);
-            self.local_count -= 1;
+            self.current.local_count -= 1;
         }
     }
 
@@ -294,15 +315,10 @@ pub const Compiler = struct {
         return self.makeConstant(objVal(self.vm.copyString(name.lexeme).asObj()));
     }
 
-    fn identifiersEqual(a: Token, b: Token) bool {
-        if (a.lexeme.len != b.lexeme.len) return false;
-        return std.mem.eql(u8, a.lexeme, b.lexeme);
-    }
-
     fn resolveLocal(self: *Compiler, name: Token) i32 {
-        var i = self.local_count - 1;
+        var i = self.current.local_count - 1;
         while (i >= 0) : (i -= 1) {
-            const local = self.locals[@intCast(i)];
+            const local = self.current.locals[@intCast(i)];
             if (identifiersEqual(name, local.name)) {
                 if (local.depth == -1) {
                     self.@"error"("Can't read local variable in its own initializer.");
@@ -314,24 +330,24 @@ pub const Compiler = struct {
     }
 
     fn addLocal(self: *Compiler, name: Token) void {
-        if (self.local_count == UINT8_COUNT) {
+        if (self.current.local_count == UINT8_COUNT) {
             self.@"error"("Too many local variables in function.");
             return;
         }
 
-        self.locals[@intCast(self.local_count)] = Local.init(name, -1);
-        self.local_count += 1;
+        self.current.locals[@intCast(self.current.local_count)] = Local.init(name, -1);
+        self.current.local_count += 1;
     }
 
     fn declareVariable(self: *Compiler) void {
-        if (self.scope_depth == 0) return;
+        if (self.current.scope_depth == 0) return;
 
         const name = self.parser.previous;
-        var i = self.local_count - 1;
+        var i = self.current.local_count - 1;
         while (i >= 0) : (i -= 1) {
-            const local = self.locals[@intCast(i)];
+            const local = self.current.locals[@intCast(i)];
 
-            if (local.depth != -1 and local.depth < self.scope_depth) {
+            if (local.depth != -1 and local.depth < self.current.scope_depth) {
                 break; // [negative]
             }
 
@@ -347,17 +363,17 @@ pub const Compiler = struct {
         self.consume(.TOKEN_IDENTIFIER, error_message);
 
         self.declareVariable();
-        if (self.scope_depth > 0) return 0;
+        if (self.current.scope_depth > 0) return 0;
 
         return self.identifierConstant(self.parser.previous);
     }
 
     fn markInitialized(self: *Compiler) void {
-        self.locals[@intCast(self.local_count - 1)].depth = self.scope_depth;
+        self.current.locals[@intCast(self.current.local_count - 1)].depth = self.current.scope_depth;
     }
 
     fn defineVariable(self: *Compiler, global: u8) void {
-        if (self.scope_depth > 0) {
+        if (self.current.scope_depth > 0) {
             self.markInitialized();
             return;
         }
@@ -703,6 +719,12 @@ pub const Compiler = struct {
 
     pub fn compile(self: *Compiler, source: []const u8, chunk: *Chunk) bool {
         self.scanner = Scanner.init(source);
+        const compiler = self.allocator.create(Kompiler) catch |err| {
+            std.debug.print("{s}", .{@errorName(err)});
+            @panic(@errorName(err));
+        };
+        compiler.* = Kompiler.init();
+        self.current = compiler;
         self.compiling_chunk = chunk;
 
         self.parser.had_error = false;
