@@ -34,6 +34,16 @@ fn byteInstruction(name: []const u8, chunk: *Chunk, offset: i32) i32 {
     return offset + 2;
 }
 
+fn jumpInstruction(name: []const u8, sign: i32, chunk: *Chunk, offset: i32) i32 {
+    var jump: u16 = @as(u16, chunk.code.items[@intCast(offset + 1)]) << 8;
+    jump |= chunk.code.items[@intCast(offset + 2)];
+    std.debug.print(
+        "{s:<16} {d:4} -> {d}\n",
+        .{ name, offset, offset + 3 + sign * jump },
+    );
+    return offset + 3;
+}
+
 pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
     std.debug.print("{d:0>4} ", .{offset});
     if (offset > 0 and
@@ -67,6 +77,9 @@ pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
         .OP_NOT => return simpleInstruction("OP_NOT", offset),
         .OP_NEGATE => return simpleInstruction("OP_NEGATE", offset),
         .OP_PRINT => return simpleInstruction("OP_PRINT", offset),
+        .OP_JUMP => return jumpInstruction("OP_JUMP", 1, chunk, offset),
+        .OP_JUMP_IF_FALSE => return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
+        .OP_LOOP => return jumpInstruction("OP_LOOP", -1, chunk, offset),
         .OP_RETURN => return simpleInstruction("OP_RETURN", offset),
         else => {
             std.debug.print("Unknown opcode {d}\n", .{instruction});

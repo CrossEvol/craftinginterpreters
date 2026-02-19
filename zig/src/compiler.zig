@@ -14,6 +14,8 @@ const Value = @import("value.zig").Value;
 const numberVal = Value.numberVal;
 const VM = @import("vm.zig").VM;
 
+const UINT16_MAX = std.math.maxInt(u16);
+
 const Parser = struct {
     current: Token,
     previous: Token,
@@ -183,6 +185,25 @@ pub const Compiler = struct {
         self.emitByte(byte2);
     }
 
+    fn emitLoop(self: *Compiler, loop_start: i32) void {
+        self.emitByte(OpCode.OP_LOOP);
+
+        const offset = self.currentChunk().count() - loop_start + 2;
+        if (offset > UINT16_MAX) {
+            self.@"error"("Loop body too large.");
+        }
+
+        self.emitByte(@as(u8, @intCast((offset >> 8) & 0xff)));
+        self.emitByte(@as(u8, @intCast(offset & 0xff)));
+    }
+
+    fn emitJump(self: *Compiler, instruction: anytype) i32 {
+        self.emitByte(instruction);
+        self.emitByte(@as(u8, 0xff));
+        self.emitByte(@as(u8, 0xff));
+        return self.currentChunk().count() - 2;
+    }
+
     fn emitReturn(self: *Compiler) void {
         self.emitByte(OpCode.OP_RETURN);
     }
@@ -199,6 +220,18 @@ pub const Compiler = struct {
 
     fn emitConstant(self: *Compiler, value: Value) void {
         self.emitBytes(OpCode.OP_CONSTANT, self.makeConstant(value));
+    }
+
+    fn patchJump(self: *Compiler, offset: i32) void {
+        // -2 to adjust for the bytecode for the jump offset itself.
+        const jump = self.currentChunk().count() - offset - 2;
+
+        if (jump > UINT16_MAX) {
+            self.@"error"("Too much code to jump over.");
+        }
+
+        self.currentChunk().code.items[@intCast(offset)] = @intCast((jump >> 8) & 0xff);
+        self.currentChunk().code.items[@intCast(offset + 1)] = @intCast(jump & 0xff);
     }
 
     fn endCompiler(self: *Compiler) void {
@@ -223,8 +256,21 @@ pub const Compiler = struct {
         }
     }
 
+    /// https://craftinginterpreters.com/image/jumping-back-and-forth/and.png
+    fn and_(self: *Compiler, can_assign: bool) void {
+        _ = can_assign;
+
+        const end_jump = self.emitJump(OpCode.OP_JUMP_IF_FALSE);
+
+        self.emitByte(OpCode.OP_POP);
+        self.parsePrecedence(.PREC_AND);
+
+        self.patchJump(end_jump);
+    }
+
     fn binary(self: *Compiler, can_assign: bool) void {
         _ = can_assign;
+
         const operator_type = self.parser.previous.type;
         const rule = getRule(operator_type);
         self.parsePrecedence(@enumFromInt(@intFromEnum(rule.precedence) + 1));
@@ -321,6 +367,7 @@ pub const Compiler = struct {
 
     fn literal(self: *Compiler, can_assign: bool) void {
         _ = can_assign;
+
         switch (self.parser.previous.type) {
             .TOKEN_FALSE => self.emitByte(OpCode.OP_FALSE),
             .TOKEN_NIL => self.emitByte(OpCode.OP_NIL),
@@ -331,6 +378,7 @@ pub const Compiler = struct {
 
     fn grouping(self: *Compiler, can_assign: bool) void {
         _ = can_assign;
+
         self.expression();
         self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
     }
@@ -344,8 +392,23 @@ pub const Compiler = struct {
         self.emitConstant(numberVal(value));
     }
 
+    /// https://craftinginterpreters.com/image/jumping-back-and-forth/or.png
+    fn or_(self: *Compiler, can_assign: bool) void {
+        _ = can_assign;
+
+        const else_jump = self.emitJump(OpCode.OP_JUMP_IF_FALSE);
+        const end_jump = self.emitJump(OpCode.OP_JUMP);
+
+        self.patchJump(else_jump);
+        self.emitByte(OpCode.OP_POP);
+
+        self.parsePrecedence(.PREC_OR);
+        self.patchJump(end_jump);
+    }
+
     fn string(self: *Compiler, can_assign: bool) void {
         _ = can_assign;
+
         const lexeme = self.parser.previous.lexeme;
         var obj_string = self.vm.copyString(lexeme[1 .. lexeme.len - 1]);
         _ = &obj_string;
@@ -382,6 +445,7 @@ pub const Compiler = struct {
 
     fn unary(self: *Compiler, can_assign: bool) void {
         _ = can_assign;
+
         const operator_type = self.parser.previous.type;
 
         // Compile the operand.
@@ -418,7 +482,7 @@ pub const Compiler = struct {
         .TOKEN_IDENTIFIER = ParseRule.init(variable, null, .PREC_NONE),
         .TOKEN_STRING = ParseRule.init(string, null, .PREC_NONE),
         .TOKEN_NUMBER = ParseRule.init(number, null, .PREC_NONE),
-        .TOKEN_AND = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_AND = ParseRule.init(null, and_, .PREC_AND),
         .TOKEN_CLASS = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_ELSE = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_FALSE = ParseRule.init(literal, null, .PREC_NONE),
@@ -426,7 +490,7 @@ pub const Compiler = struct {
         .TOKEN_FUN = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_IF = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_NIL = ParseRule.init(literal, null, .PREC_NONE),
-        .TOKEN_OR = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_OR = ParseRule.init(null, or_, .PREC_OR),
         .TOKEN_PRINT = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_RETURN = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_SUPER = ParseRule.init(null, null, .PREC_NONE),
@@ -505,6 +569,88 @@ pub const Compiler = struct {
         self.emitByte(OpCode.OP_PRINT);
     }
 
+    /// https://craftinginterpreters.com/image/jumping-back-and-forth/for.png
+    fn forStatement(self: *Compiler) void {
+        self.beginScope();
+        self.consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'for'.");
+        if (self.match(.TOKEN_SEMICOLON)) {
+            // No initializer.
+        } else if (self.match(.TOKEN_VAR)) {
+            self.varDeclaration();
+        } else {
+            self.expressionStatement();
+        }
+
+        var loop_start = self.currentChunk().count();
+        var exit_jump: i32 = -1;
+        if (!self.match(.TOKEN_SEMICOLON)) {
+            self.expression();
+            self.consume(.TOKEN_SEMICOLON, "Expect ';' after loop condition.");
+
+            // Jump out of the loop if the condition is false.
+            exit_jump = self.emitJump(OpCode.OP_JUMP_IF_FALSE);
+            self.emitByte(OpCode.OP_POP); // Condition.
+        }
+
+        if (!self.match(.TOKEN_RIGHT_PAREN)) {
+            const body_jump = self.emitJump(OpCode.OP_JUMP);
+
+            const increment_start = self.currentChunk().count();
+            self.expression();
+            self.emitByte(OpCode.OP_POP);
+            self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after for clauses.");
+
+            self.emitLoop(loop_start);
+            loop_start = increment_start;
+            self.patchJump(body_jump);
+        }
+
+        self.statement();
+        self.emitLoop(loop_start);
+
+        if (exit_jump != -1) {
+            self.patchJump(exit_jump);
+            self.emitByte(OpCode.OP_POP); // Condition.
+        }
+
+        self.endScope();
+    }
+
+    /// https://craftinginterpreters.com/image/jumping-back-and-forth/full-if-else.png
+    fn ifStatement(self: *Compiler) void {
+        self.consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'if'.");
+        self.expression();
+        self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+
+        const then_jump = self.emitJump(OpCode.OP_JUMP_IF_FALSE);
+        self.emitByte(OpCode.OP_POP);
+        self.statement();
+
+        const else_jump = self.emitJump(OpCode.OP_JUMP);
+
+        self.patchJump(then_jump);
+        self.emitByte(OpCode.OP_POP);
+
+        if (self.match(.TOKEN_ELSE)) self.statement();
+        self.patchJump(else_jump);
+    }
+
+    /// https://craftinginterpreters.com/image/jumping-back-and-forth/while.png
+    fn whileStatement(self: *Compiler) void {
+        const loop_start = self.currentChunk().count();
+        self.consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
+        self.expression();
+        self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+
+        const exit_jump = self.emitJump(OpCode.OP_JUMP_IF_FALSE);
+        self.emitByte(OpCode.OP_POP);
+        self.statement();
+        self.emitLoop(loop_start);
+
+        self.patchJump(exit_jump);
+        self.emitByte(OpCode.OP_POP);
+    }
+
     fn synchronize(self: *Compiler) void {
         self.parser.panic_mode = false;
 
@@ -540,6 +686,12 @@ pub const Compiler = struct {
     fn statement(self: *Compiler) void {
         if (self.match(.TOKEN_PRINT)) {
             self.printStatement();
+        } else if (self.match(.TOKEN_FOR)) {
+            self.forStatement();
+        } else if (self.match(.TOKEN_IF)) {
+            self.ifStatement();
+        } else if (self.match(.TOKEN_WHILE)) {
+            self.whileStatement();
         } else if (self.match(.TOKEN_LEFT_BRACE)) {
             self.beginScope();
             self.block();

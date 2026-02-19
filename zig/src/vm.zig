@@ -275,6 +275,20 @@ pub const VM = struct {
                     printValue(self.pop());
                     std.debug.print("\n", .{});
                 },
+                .OP_JUMP => {
+                    const offset = self.readShort();
+                    self.ip += @as(usize, @intCast(offset));
+                },
+                .OP_JUMP_IF_FALSE => {
+                    const offset = self.readShort();
+                    if (isFalsy(self.peek(0))) {
+                        self.ip += @as(usize, @intCast(offset));
+                    }
+                },
+                .OP_LOOP => {
+                    const offset = self.readShort();
+                    self.ip -= @as(usize, @intCast(offset));
+                },
                 .OP_RETURN => {
                     // Exit interpreter.
                     return .INTERPRET_OK;
@@ -292,6 +306,13 @@ pub const VM = struct {
 
     fn readConstant(self: *VM) Value {
         return self.chunk.constants.values.items[self.readByte()];
+    }
+
+    fn readShort(self: *VM) u16 {
+        self.ip += 2;
+        const msb = self.chunk.code.items[self.ip - 2];
+        const lsb = self.chunk.code.items[self.ip - 1];
+        return @intCast(@as(u16, msb) << 8 | lsb);
     }
 
     fn readString(self: *VM) *ObjString {
