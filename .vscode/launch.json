@@ -5,11 +5,22 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug zlox",
+            "name": "Debug zlox REPL",
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${workspaceRoot}/zig/zig-out/bin/zlox.exe",
             "args": [],
+            "cwd": "${workspaceRoot}/zig",
+            "preLaunchTask": "build-zlox-debug"
+        },
+        {
+            "name": "Debug zlox RUN",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceRoot}/zig/zig-out/bin/zlox.exe",
+            "args": [
+                "${workspaceRoot}/var.lox"
+            ],
             "cwd": "${workspaceRoot}/zig",
             "preLaunchTask": "build-zlox-debug"
         },

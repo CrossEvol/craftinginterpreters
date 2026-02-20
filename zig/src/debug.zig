@@ -4,7 +4,7 @@ const Chunk = @import("chunk.zig").Chunk;
 const OpCode = @import("chunk.zig").OpCode;
 const printValue = @import("value.zig").printValue;
 
-pub fn disassembleChunk(chunk: *Chunk, comptime name: []const u8) void {
+pub fn disassembleChunk(chunk: *Chunk, name: []const u8) void {
     std.debug.print("== {s} ==\n", .{name});
 
     var offset: i32 = 0;
@@ -80,6 +80,7 @@ pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
         .OP_JUMP => return jumpInstruction("OP_JUMP", 1, chunk, offset),
         .OP_JUMP_IF_FALSE => return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
         .OP_LOOP => return jumpInstruction("OP_LOOP", -1, chunk, offset),
+        .OP_CALL => return byteInstruction("OP_CALL", chunk, offset),
         .OP_RETURN => return simpleInstruction("OP_RETURN", offset),
         else => {
             std.debug.print("Unknown opcode {d}\n", .{instruction});
