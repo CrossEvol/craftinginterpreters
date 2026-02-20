@@ -2,10 +2,15 @@ const std = @import("std");
 
 const Chunk = @import("chunk.zig").Chunk;
 const Value = @import("value.zig").Value;
+const nil_val = Value.nil_val;
 const asObj = Value.asObj;
 
 pub fn objType(value: Value) ObjType {
     return asObj(value).type;
+}
+
+pub fn isClosure(value: Value) bool {
+    return isObjType(value, .OBJ_CLOSURE);
 }
 
 pub fn isFunction(value: Value) bool {
@@ -18,6 +23,14 @@ pub fn isNative(value: Value) bool {
 
 pub fn isString(value: Value) bool {
     return isObjType(value, .OBJ_STRING);
+}
+
+pub fn asClosure(value: Value) *ObjClosure {
+    return @alignCast(@fieldParentPtr("obj", asObj(value)));
+}
+
+pub fn asUpvalue(value: Value) *ObjUpvalue {
+    return @alignCast(@fieldParentPtr("obj", asObj(value)));
 }
 
 pub fn asFunction(value: Value) *ObjFunction {
@@ -37,9 +50,11 @@ pub fn asCString(value: Value) []const u8 {
 }
 
 const ObjType = enum {
+    OBJ_CLOSURE,
     OBJ_FUNCTION,
     OBJ_NATIVE,
     OBJ_STRING,
+    OBJ_UPVALUE,
 };
 
 pub const Obj = struct {
@@ -50,6 +65,7 @@ pub const Obj = struct {
 pub const ObjFunction = struct {
     obj: Obj,
     arity: i32,
+    upvalue_count: usize,
     chunk: Chunk, // owned?
     name: ?*ObjString,
 
@@ -60,6 +76,7 @@ pub const ObjFunction = struct {
                 .next = obj,
             },
             .arity = 0,
+            .upvalue_count = 0,
             .chunk = try Chunk.init(allocator),
             .name = null,
         };
@@ -125,6 +142,54 @@ pub const ObjString = struct {
     }
 };
 
+pub const ObjUpvalue = struct {
+    obj: Obj,
+    location: *Value,
+    closed: Value,
+    next: ?*ObjUpvalue,
+
+    pub fn init(obj: ?*Obj, slot: *Value) ObjUpvalue {
+        return .{
+            .obj = .{
+                .type = .OBJ_UPVALUE,
+                .next = obj,
+            },
+            .location = slot,
+            .closed = nil_val,
+            .next = null,
+        };
+    }
+
+    /// Upcast , *ObjUpvalue -> *Obj
+    pub fn asObj(self: *ObjUpvalue) *Obj {
+        return &self.obj;
+    }
+};
+
+pub const ObjClosure = struct {
+    obj: Obj,
+    function: *ObjFunction,
+    upvalues: []?*ObjUpvalue,
+    upvalue_count: usize,
+
+    pub fn init(obj: ?*Obj, upvalues: []?*ObjUpvalue, function: *ObjFunction) ObjClosure {
+        return .{
+            .obj = .{
+                .type = .OBJ_CLOSURE,
+                .next = obj,
+            },
+            .function = function,
+            .upvalues = upvalues,
+            .upvalue_count = function.upvalue_count,
+        };
+    }
+
+    /// Upcast , *ObjClosure -> *Obj
+    pub fn asObj(self: *ObjClosure) *Obj {
+        return &self.obj;
+    }
+};
+
 fn printFunction(function: *ObjFunction) void {
     if (function.name) |func_name| {
         std.debug.print("<fn {s}>", .{func_name.chars});
@@ -135,11 +200,13 @@ fn printFunction(function: *ObjFunction) void {
 
 pub fn printObject(value: Value) void {
     switch (objType(value)) {
+        .OBJ_CLOSURE => printFunction(asClosure(value).function),
         .OBJ_FUNCTION => printFunction(asFunction(value)),
         .OBJ_NATIVE => std.debug.print("<native fn>", .{}),
         .OBJ_STRING => {
             std.debug.print("{s}", .{asCString(value)});
         },
+        .OBJ_UPVALUE => std.debug.print("upvalue", .{}),
     }
 }
 

@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const asFunction = @import("object.zig").asFunction;
 const Chunk = @import("chunk.zig").Chunk;
 const OpCode = @import("chunk.zig").OpCode;
 const printValue = @import("value.zig").printValue;
@@ -67,6 +68,8 @@ pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
         .OP_GET_GLOBAL => return constantInstruction("OP_GET_GLOBAL", chunk, offset),
         .OP_DEFINE_GLOBAL => return constantInstruction("OP_DEFINE_GLOBAL", chunk, offset),
         .OP_SET_GLOBAL => return constantInstruction("OP_SET_GLOBAL", chunk, offset),
+        .OP_GET_UPVALUE => return byteInstruction("OP_GET_UPVALUE", chunk, offset),
+        .OP_SET_UPVALUE => return byteInstruction("OP_SET_UPVALUE", chunk, offset),
         .OP_EQUAL => return simpleInstruction("OP_EQUAL", offset),
         .OP_GREATER => return simpleInstruction("OP_GREATER", offset),
         .OP_LESS => return simpleInstruction("OP_LESS", offset),
@@ -81,6 +84,29 @@ pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
         .OP_JUMP_IF_FALSE => return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
         .OP_LOOP => return jumpInstruction("OP_LOOP", -1, chunk, offset),
         .OP_CALL => return byteInstruction("OP_CALL", chunk, offset),
+        .OP_CLOSURE => {
+            var offsetU: usize = @intCast(offset);
+            offsetU += 1;
+            const constant = chunk.code.items[@as(usize, @intCast(offsetU))];
+            offsetU += 1;
+            std.debug.print("{s:<16} {d:4} ", .{ "OP_CLOSURE", constant });
+            printValue(chunk.constants.values.items[@intCast(constant)]);
+            std.debug.print("\n", .{});
+
+            const function = asFunction(chunk.constants.values.items[constant]);
+            for (0..function.upvalue_count) |_| {
+                const is_local = chunk.code.items[offsetU];
+                offsetU += 1;
+                const index = chunk.code.items[offsetU];
+                offsetU += 1;
+                std.debug.print(
+                    "{d:4}      |                     {s} {d}\n",
+                    .{ offsetU - 2, if (is_local > 0) "local" else "upvalue", index },
+                );
+            }
+            return @intCast(offsetU);
+        },
+        .OP_CLOSE_UPVALUE => return simpleInstruction("OP_CLOSE_UPVALUE", offset),
         .OP_RETURN => return simpleInstruction("OP_RETURN", offset),
         else => {
             std.debug.print("Unknown opcode {d}\n", .{instruction});

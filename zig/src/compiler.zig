@@ -15,6 +15,8 @@ const Value = @import("value.zig").Value;
 const numberVal = Value.numberVal;
 const VM = @import("vm.zig").VM;
 
+const UNKNOWN_COMPILER = "Current compiler is NULL!";
+
 const UINT16_MAX = std.math.maxInt(u16);
 
 const Parser = struct {
@@ -66,11 +68,25 @@ const ParseRule = struct {
 const Local = struct {
     name: Token,
     depth: i32,
+    is_captured: bool,
 
     pub fn init(name: Token, depth: i32) Local {
         return .{
             .name = name,
             .depth = depth,
+            .is_captured = false,
+        };
+    }
+};
+
+const Upvalue = struct {
+    index: u8,
+    is_local: bool,
+
+    pub fn init(index: u8, is_local: bool) Upvalue {
+        return .{
+            .index = index,
+            .is_local = is_local,
         };
     }
 };
@@ -88,6 +104,7 @@ const Kompiler = struct {
 
     locals: [UINT8_COUNT]Local,
     local_count: i32,
+    upvalues: [UINT8_COUNT]Upvalue,
     scope_depth: i32,
 
     pub fn init(enclosing: ?*Kompiler, @"type": FunctionType) Kompiler {
@@ -97,6 +114,7 @@ const Kompiler = struct {
             .type = @"type",
             .locals = undefined,
             .local_count = 0,
+            .upvalues = undefined,
             .scope_depth = 0,
         };
     }
@@ -113,26 +131,14 @@ pub const Compiler = struct {
     parser: Parser,
     scanner: Scanner,
     vm: *VM,
-    allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, vm: *VM) Compiler {
+    pub fn init(vm: *VM) Compiler {
         return .{
             .current = null,
             .scanner = undefined,
             .parser = Parser.init(),
             .vm = vm,
-            .allocator = allocator,
         };
-    }
-
-    pub fn deinit(self: *Compiler) void {
-        var option_curr = self.current;
-        while (option_curr != null) {
-            if (option_curr) |curr| {
-                option_curr = curr.enclosing;
-                self.allocator.destroy(curr);
-            }
-        }
     }
 
     fn currentChunk(self: *Compiler) *Chunk {
@@ -276,12 +282,8 @@ pub const Compiler = struct {
     }
 
     /// WARNING: correspond to initCompiler in c codebase.
-    fn initKompiler(self: *Compiler, allocator: std.mem.Allocator, enclosing: ?*Kompiler, @"type": FunctionType) *Kompiler {
-        const kompiler = allocator.create(Kompiler) catch |err| {
-            std.debug.print("{s}", .{@errorName(err)});
-            @panic(@errorName(err));
-        };
-        kompiler.* = Kompiler.init(enclosing, @"type");
+    fn initKompiler(self: *Compiler, kompiler: *Kompiler, @"type": FunctionType) Kompiler {
+        kompiler.* = Kompiler.init(self.current, @"type");
         kompiler.function = self.vm.newFunction();
         // copyString may trigger gc, so should let current be referenced before
         self.current = kompiler;
@@ -293,7 +295,7 @@ pub const Compiler = struct {
         self.current.?.locals[0] = Local.init(Token.init(.TOKEN_LEFT_PAREN, "", 0), 0);
         self.current.?.local_count += 1;
 
-        return kompiler;
+        return kompiler.*;
     }
 
     fn endCompiler(self: *Compiler) *ObjFunction {
@@ -310,26 +312,34 @@ pub const Compiler = struct {
             }
         }
 
-        const option_prev = self.current;
         self.current = self.current.?.enclosing;
-        if (option_prev) |prev| {
-            self.allocator.destroy(prev);
-        }
 
         return func;
     }
 
     fn beginScope(self: *Compiler) void {
-        self.current.?.scope_depth += 1;
+        if (self.current) |current| {
+            current.scope_depth += 1;
+            return;
+        }
+        @panic(UNKNOWN_COMPILER);
     }
 
     fn endScope(self: *Compiler) void {
-        self.current.?.scope_depth -= 1;
+        if (self.current) |current| {
+            current.scope_depth -= 1;
 
-        while (self.current.?.local_count > 0 and self.current.?.locals[@intCast(self.current.?.local_count - 1)].depth > self.current.?.scope_depth) {
-            self.emitByte(OpCode.OP_POP);
-            self.current.?.local_count -= 1;
+            while (current.local_count > 0 and current.locals[@intCast(current.local_count - 1)].depth > current.scope_depth) {
+                if (current.locals[@intCast(current.local_count - 1)].is_captured) {
+                    self.emitByte(OpCode.OP_CLOSE_UPVALUE);
+                } else {
+                    self.emitByte(OpCode.OP_POP);
+                }
+                current.local_count -= 1;
+            }
+            return;
         }
+        @panic(UNKNOWN_COMPILER);
     }
 
     /// https://craftinginterpreters.com/image/jumping-back-and-forth/and.png
@@ -370,10 +380,10 @@ pub const Compiler = struct {
         return self.makeConstant(objVal(self.vm.copyString(name.lexeme).asObj()));
     }
 
-    fn resolveLocal(self: *Compiler, name: Token) i32 {
-        var i = self.current.?.local_count - 1;
+    fn resolveLocal(self: *Compiler, kompiler: *Kompiler, name: Token) i32 {
+        var i = kompiler.local_count - 1;
         while (i >= 0) : (i -= 1) {
-            const local = self.current.?.locals[@intCast(i)];
+            const local = kompiler.locals[@intCast(i)];
             if (identifiersEqual(name, local.name)) {
                 if (local.depth == -1) {
                     self.@"error"("Can't read local variable in its own initializer.");
@@ -381,6 +391,46 @@ pub const Compiler = struct {
                 return i;
             }
         }
+        return -1;
+    }
+
+    pub fn addUpvalue(self: *Compiler, kompiler: *Kompiler, index: u8, is_local: bool) i32 {
+        const upvalue_count = kompiler.function.upvalue_count;
+
+        for (0..upvalue_count) |i| {
+            const upvalue = kompiler.upvalues[i];
+            if (upvalue.index == index and upvalue.is_local == is_local) {
+                return @intCast(i);
+            }
+        }
+
+        if (upvalue_count == UINT8_COUNT) {
+            self.@"error"("Too many closure variables in function.");
+            return 0;
+        }
+
+        kompiler.upvalues[upvalue_count] = Upvalue.init(index, is_local);
+        const upvalue_idx = kompiler.function.upvalue_count;
+        kompiler.function.upvalue_count += 1;
+        return @intCast(upvalue_idx);
+    }
+
+    pub fn resolveUpvalue(self: *Compiler, kompiler: *Kompiler, name: Token) i32 {
+        if (kompiler.enclosing == null) return -1;
+
+        if (kompiler.enclosing) |enclosing| {
+            const local = self.resolveLocal(enclosing, name);
+            if (local != -1) {
+                enclosing.locals[@intCast(local)].is_captured = true;
+                return self.addUpvalue(kompiler, @intCast(local), true);
+            }
+
+            const upvalue = self.resolveUpvalue(enclosing, name);
+            if (upvalue != -1) {
+                return self.addUpvalue(kompiler, @intCast(upvalue), false);
+            }
+        }
+
         return -1;
     }
 
@@ -518,15 +568,21 @@ pub const Compiler = struct {
     fn namedVariable(self: *Compiler, name: Token, can_assign: bool) void {
         var get_op: OpCode = undefined;
         var set_op: OpCode = undefined;
-        var arg = self.resolveLocal(name);
+        var arg = self.resolveLocal(self.current.?, name);
 
         if (arg != -1) {
             get_op = .OP_GET_LOCAL;
             set_op = .OP_SET_LOCAL;
         } else {
-            arg = @intCast(self.identifierConstant(name));
-            get_op = .OP_GET_GLOBAL;
-            set_op = .OP_SET_GLOBAL;
+            arg = self.resolveUpvalue(self.current.?, name);
+            if (arg != -1) {
+                get_op = .OP_GET_UPVALUE;
+                set_op = .OP_SET_UPVALUE;
+            } else {
+                arg = @intCast(self.identifierConstant(name));
+                get_op = .OP_GET_GLOBAL;
+                set_op = .OP_SET_GLOBAL;
+            }
         }
 
         if (can_assign and self.match(.TOKEN_EQUAL)) {
@@ -642,7 +698,8 @@ pub const Compiler = struct {
     }
 
     fn function(self: *Compiler, @"type": FunctionType) void {
-        self.current = self.initKompiler(self.allocator, self.current, @"type");
+        var kompiler: Kompiler = undefined;
+        kompiler = self.initKompiler(&kompiler, @"type");
         self.beginScope(); // [no-end-scope]
 
         self.consume(.TOKEN_LEFT_PAREN, "Expect '(' after function name.");
@@ -665,7 +722,12 @@ pub const Compiler = struct {
         self.block();
 
         const func = self.endCompiler();
-        self.emitBytes(OpCode.OP_CONSTANT, self.makeConstant(objVal(func.asObj())));
+        self.emitBytes(OpCode.OP_CLOSURE, self.makeConstant(objVal(func.asObj())));
+
+        for (0..func.upvalue_count) |i| {
+            self.emitByte(if (kompiler.upvalues[i].is_local) @as(u8, 1) else @as(u8, 0));
+            self.emitByte(kompiler.upvalues[i].index);
+        }
     }
 
     fn funDeclaration(self: *Compiler) void {
@@ -853,7 +915,8 @@ pub const Compiler = struct {
 
     pub fn compile(self: *Compiler, source: []const u8) ?*ObjFunction {
         self.scanner = Scanner.init(source);
-        self.current = self.initKompiler(self.allocator, self.current, .TYPE_SCRIPT);
+        var kompiler: Kompiler = undefined;
+        kompiler = self.initKompiler(&kompiler, .TYPE_SCRIPT);
 
         self.parser.had_error = false;
         self.parser.panic_mode = false;
