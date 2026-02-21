@@ -70,6 +70,8 @@ pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
         .OP_SET_GLOBAL => return constantInstruction("OP_SET_GLOBAL", chunk, offset),
         .OP_GET_UPVALUE => return byteInstruction("OP_GET_UPVALUE", chunk, offset),
         .OP_SET_UPVALUE => return byteInstruction("OP_SET_UPVALUE", chunk, offset),
+        .OP_GET_PROPERTY => return constantInstruction("OP_GET_PROPERTY", chunk, offset),
+        .OP_SET_PROPERTY => return constantInstruction("OP_SET_PROPERTY", chunk, offset),
         .OP_EQUAL => return simpleInstruction("OP_EQUAL", offset),
         .OP_GREATER => return simpleInstruction("OP_GREATER", offset),
         .OP_LESS => return simpleInstruction("OP_LESS", offset),
@@ -108,6 +110,7 @@ pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
         },
         .OP_CLOSE_UPVALUE => return simpleInstruction("OP_CLOSE_UPVALUE", offset),
         .OP_RETURN => return simpleInstruction("OP_RETURN", offset),
+        .OP_CLASS => return constantInstruction("OP_CLASS", chunk, offset),
         else => {
             std.debug.print("Unknown opcode {d}\n", .{instruction});
             return offset + 1;

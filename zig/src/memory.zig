@@ -8,7 +8,9 @@ const UINT8_COUNT = common.UINT8_COUNT;
 const ObjectNsp = @import("object.zig");
 const Obj = ObjectNsp.Obj;
 const asClosure = ObjectNsp.asClosure;
+const asClass = ObjectNsp.asClass;
 const asFunction = ObjectNsp.asFunction;
+const asInstance = ObjectNsp.asInstance;
 const asNative = ObjectNsp.asNative;
 const asString = ObjectNsp.asString;
 const asUpvalue = ObjectNsp.asUpvalue;
@@ -85,6 +87,10 @@ pub const GC = struct {
         }
 
         switch (object.type) {
+            .OBJ_CLASS => {
+                const class = object.asObjClass();
+                self.markObject(class.name.asObj());
+            },
             .OBJ_CLOSURE => {
                 const closure = object.asObjClosure();
                 self.markObject(closure.function.asObj());
@@ -102,6 +108,11 @@ pub const GC = struct {
                 }
                 self.markArray(function.chunk.constants);
             },
+            .OBJ_INSTANCE => {
+                const instance = object.asObjInstance();
+                self.markObject(instance.klass.asObj());
+                instance.fields.markTable();
+            },
             .OBJ_UPVALUE => {
                 self.markValue(object.asObjUpvalue().closed);
             },
@@ -118,6 +129,10 @@ pub const GC = struct {
             );
         }
         switch (object.type) {
+            .OBJ_CLASS => {
+                const class = asClass(objVal(object));
+                self.allocator.destroy(class);
+            },
             .OBJ_CLOSURE => {
                 const closure = asClosure(objVal(object));
                 self.allocator.free(closure.upvalues);
@@ -127,6 +142,11 @@ pub const GC = struct {
                 const function = asFunction(objVal(object));
                 function.deinit();
                 self.allocator.destroy(function);
+            },
+            .OBJ_INSTANCE => {
+                const instance = asInstance(objVal(object));
+                instance.fields.deinit();
+                self.allocator.destroy(instance);
             },
             .OBJ_NATIVE => {
                 const native = asNative(objVal(object));

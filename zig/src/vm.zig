@@ -14,13 +14,18 @@ const asString = ObjectNsp.asString;
 const isString = ObjectNsp.isString;
 const Obj = ObjectNsp.Obj;
 const ObjFunction = ObjectNsp.ObjFunction;
+const isInstance = ObjectNsp.isInstance;
+const asInstance = ObjectNsp.asInstance;
 const ObjClosure = ObjectNsp.ObjClosure;
 const ObjUpvalue = ObjectNsp.ObjUpvalue;
 const objType = ObjectNsp.objType;
 const asFunction = ObjectNsp.asFunction;
 const asUpvalue = ObjectNsp.asUpvalue;
+const asClass = ObjectNsp.asClass;
 const asClosure = ObjectNsp.asClosure;
 const ObjNative = ObjectNsp.ObjNative;
+const ObjInstance = ObjectNsp.ObjInstance;
+const ObjClass = ObjectNsp.ObjClass;
 const ObjString = ObjectNsp.ObjString;
 const asNative = ObjectNsp.asNative;
 const NativeFn = ObjectNsp.NativeFn;
@@ -292,6 +297,36 @@ pub const VM = struct {
                     const slot = self.readByte();
                     frame.closure.upvalues[slot].?.location.* = self.peek(0);
                 },
+                .OP_GET_PROPERTY => {
+                    if (!isInstance(self.peek(0))) {
+                        self.runtimeError("Only instances have properties.", .{});
+                        return .INTERPRET_RUNTIME_ERROR;
+                    }
+
+                    const instance = asInstance(self.peek(0));
+                    const name = self.readString();
+
+                    const value, const ok = instance.fields.get(name);
+                    if (!ok) {
+                        self.runtimeError("Undefined property '{s}'.", .{name.chars});
+                        return .INTERPRET_RUNTIME_ERROR;
+                    }
+
+                    _ = self.pop(); // Instance.
+                    self.push(value);
+                },
+                .OP_SET_PROPERTY => {
+                    if (!isInstance(self.peek(1))) {
+                        self.runtimeError("Only instances have fields.", .{});
+                        return .INTERPRET_RUNTIME_ERROR;
+                    }
+
+                    const instance = asInstance(self.peek(1));
+                    _ = instance.fields.set(self.readString(), self.peek(0));
+                    const value = self.pop();
+                    _ = self.pop();
+                    self.push(value);
+                },
                 .OP_EQUAL => {
                     const b = self.pop();
                     const a = self.pop();
@@ -408,6 +443,10 @@ pub const VM = struct {
                     self.push(result);
                     frame = &self.frames[self.frame_count - 1];
                 },
+                .OP_CLASS => {
+                    const klass = self.newClass(self.readString());
+                    self.push(objVal(klass.asObj()));
+                },
                 else => {},
             }
         }
@@ -497,6 +536,11 @@ pub const VM = struct {
     fn callValue(self: *VM, callee: Value, arg_count: usize) bool {
         if (isObj(callee)) {
             switch (objType(callee)) {
+                .OBJ_CLASS => {
+                    const klass = asClass(callee);
+                    self.stack[self.stackTop - arg_count - 1] = objVal(self.newInstance(klass).asObj());
+                    return true;
+                },
                 .OBJ_CLOSURE => { // [switch]
                     return self.call(asClosure(callee), arg_count);
                 },
@@ -579,9 +623,21 @@ pub const VM = struct {
         return hash;
     }
 
-    pub fn newClosure(self: *VM, function: *ObjFunction) *ObjClosure {
-        self.gc.reallocate(0, @sizeOf(ObjClosure));
+    pub fn newClass(self: *VM, name: *ObjString) *ObjClass {
+        self.gc.reallocate(0, @sizeOf(ObjClass));
 
+        const klass = self.allocator.create(ObjClass) catch |err| {
+            std.debug.print("{s}", .{@errorName(err)});
+            @panic("OOM");
+        };
+        klass.* = ObjClass.init(self, name);
+        self.objects = &klass.obj;
+
+        return klass;
+    }
+
+    pub fn newClosure(self: *VM, function: *ObjFunction) *ObjClosure {
+        self.gc.reallocate(0, function.upvalue_count * (@sizeOf(?*ObjUpvalue)));
         var upvalues = self.allocator.alloc(?*ObjUpvalue, function.upvalue_count) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
@@ -590,11 +646,12 @@ pub const VM = struct {
             upvalues[i] = null;
         }
 
+        self.gc.reallocate(0, @sizeOf(ObjClosure));
         const closure = self.allocator.create(ObjClosure) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
         };
-        closure.* = ObjClosure.init(self.objects, upvalues, function);
+        closure.* = ObjClosure.init(self, upvalues, function);
         self.objects = &closure.obj;
 
         return closure;
@@ -607,7 +664,7 @@ pub const VM = struct {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
         };
-        upvalue.* = ObjUpvalue.init(self.objects, slot);
+        upvalue.* = ObjUpvalue.init(self, slot);
         self.objects = &upvalue.obj;
 
         return upvalue;
@@ -629,6 +686,19 @@ pub const VM = struct {
         return function;
     }
 
+    pub fn newInstance(self: *VM, klass: *ObjClass) *ObjInstance {
+        self.gc.reallocate(0, @sizeOf(ObjInstance));
+
+        const instance = self.allocator.create(ObjInstance) catch |err| {
+            std.debug.print("{s}", .{@errorName(err)});
+            @panic("OOM");
+        };
+        instance.* = ObjInstance.init(self, klass);
+        self.objects = &instance.obj;
+
+        return instance;
+    }
+
     fn newNative(self: *VM, function: NativeFn) *ObjNative {
         self.gc.reallocate(0, @sizeOf(ObjNative));
 
@@ -636,7 +706,7 @@ pub const VM = struct {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
         };
-        native.* = ObjNative.init(self.objects, function);
+        native.* = ObjNative.init(self, function);
         self.objects = &native.obj;
 
         return native;
@@ -649,7 +719,7 @@ pub const VM = struct {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
         };
-        string.* = ObjString.init(self.objects, chars, hash);
+        string.* = ObjString.init(self, chars, hash);
         self.objects = &string.obj;
 
         self.push(objVal(string.asObj()));
@@ -681,6 +751,7 @@ pub const VM = struct {
             return interned;
         }
 
+        self.gc.reallocate(0, chars.len * @sizeOf(u8));
         const heap_chars = self.allocator.dupe(u8, chars) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic(@errorName(err));

@@ -284,7 +284,9 @@ pub const Compiler = struct {
     /// WARNING: correspond to initCompiler in c codebase.
     fn initKompiler(self: *Compiler, kompiler: *Kompiler, @"type": FunctionType) Kompiler {
         kompiler.* = Kompiler.init(self.current, @"type");
-        kompiler.function = self.vm.newFunction();
+        const new_func = self.vm.newFunction();
+        self.vm.push(objVal(new_func.asObj())); // for GC track, should immediate rooting
+        kompiler.function = new_func;
         // copyString may trigger gc, so should let current be referenced before
         self.current = kompiler;
 
@@ -295,6 +297,7 @@ pub const Compiler = struct {
         self.current.?.locals[0] = Local.init(Token.init(.TOKEN_LEFT_PAREN, "", 0), 0);
         self.current.?.local_count += 1;
 
+        _ = self.vm.pop(); // now pop it for clean hand-off
         return kompiler.*;
     }
 
@@ -513,6 +516,18 @@ pub const Compiler = struct {
         self.emitBytes(OpCode.OP_CALL, arg_count);
     }
 
+    fn dot(self: *Compiler, can_assign: bool) void {
+        self.consume(.TOKEN_IDENTIFIER, "Expect property name after '.'.");
+        const name = self.identifierConstant(self.parser.previous);
+
+        if (can_assign and self.match(.TOKEN_EQUAL)) {
+            self.expression();
+            self.emitBytes(OpCode.OP_SET_PROPERTY, name);
+        } else {
+            self.emitBytes(OpCode.OP_GET_PROPERTY, name);
+        }
+    }
+
     fn literal(self: *Compiler, can_assign: bool) void {
         _ = can_assign;
 
@@ -619,7 +634,7 @@ pub const Compiler = struct {
         .TOKEN_LEFT_BRACE = ParseRule.init(null, null, .PREC_NONE), // [big]
         .TOKEN_RIGHT_BRACE = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_COMMA = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_DOT = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_DOT = ParseRule.init(null, dot, .PREC_CALL),
         .TOKEN_MINUS = ParseRule.init(unary, binary, .PREC_TERM),
         .TOKEN_PLUS = ParseRule.init(null, binary, .PREC_TERM),
         .TOKEN_SEMICOLON = ParseRule.init(null, null, .PREC_NONE),
@@ -728,6 +743,18 @@ pub const Compiler = struct {
             self.emitByte(if (kompiler.upvalues[i].is_local) @as(u8, 1) else @as(u8, 0));
             self.emitByte(kompiler.upvalues[i].index);
         }
+    }
+
+    fn classDeclaration(self: *Compiler) void {
+        self.consume(.TOKEN_IDENTIFIER, "Expect class name.");
+        const name_constant = self.identifierConstant(self.parser.previous);
+        self.declareVariable();
+
+        self.emitBytes(OpCode.OP_CLASS, name_constant);
+        self.defineVariable(name_constant);
+
+        self.consume(.TOKEN_LEFT_BRACE, "Expect '{' before class body.");
+        self.consume(.TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
     }
 
     fn funDeclaration(self: *Compiler) void {
@@ -883,7 +910,9 @@ pub const Compiler = struct {
     }
 
     fn declaration(self: *Compiler) void {
-        if (self.match(.TOKEN_FUN)) {
+        if (self.match(.TOKEN_CLASS)) {
+            self.classDeclaration();
+        } else if (self.match(.TOKEN_FUN)) {
             self.funDeclaration();
         } else if (self.match(.TOKEN_VAR)) {
             self.varDeclaration();

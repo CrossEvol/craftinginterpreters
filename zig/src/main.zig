@@ -32,8 +32,8 @@ fn repl(allocator: std.mem.Allocator, vm: *VM) !void {
     }
 }
 
-fn readFile(allocator: std.mem.Allocator, path: []const u8) []const u8 {
-    var threaded: std.Io.Threaded = .init(allocator, .{});
+fn readFile(vm: *VM, path: []const u8) []const u8 {
+    var threaded: std.Io.Threaded = .init(vm.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -61,7 +61,8 @@ fn readFile(allocator: std.mem.Allocator, path: []const u8) []const u8 {
         std.process.exit(74);
     };
     const file_size = stat.size;
-    const data = allocator.alloc(u8, file_size) catch |err| {
+    vm.gc.reallocate(0, @sizeOf(u8) * file_size);
+    const data = vm.allocator.alloc(u8, file_size) catch |err| {
         std.debug.print("Not enough memory to read \"{s}\": {s}.\n", .{ path, @errorName(err) });
         std.process.exit(74);
     };
@@ -77,9 +78,9 @@ fn readFile(allocator: std.mem.Allocator, path: []const u8) []const u8 {
     return data;
 }
 
-fn runFile(allocator: std.mem.Allocator, vm: *VM, path: []const u8) !void {
-    const source = readFile(allocator, path);
-    defer allocator.free(source);
+fn runFile(vm: *VM, path: []const u8) !void {
+    const source = readFile(vm, path);
+    defer vm.allocator.free(source);
 
     const result = try vm.interpret(source);
     if (result == .INTERPRET_COMPILE_ERROR) std.process.exit(65);
@@ -101,7 +102,7 @@ pub fn main() !void {
     if (args.len == 1) {
         try repl(allocator, vm);
     } else if (args.len == 2) {
-        try runFile(allocator, vm, args[1]);
+        try runFile(vm, args[1]);
     } else {
         std.debug.print("Usage: zlox [path]\n", .{});
         std.process.exit(64);
