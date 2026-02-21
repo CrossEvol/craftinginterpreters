@@ -930,4 +930,14 @@ pub const Compiler = struct {
         const func = self.endCompiler();
         return if (self.parser.had_error) null else func;
     }
+
+    pub fn markCompilerRoots(self: *Compiler) void {
+        var option_kompiler = self.current;
+        while (option_kompiler != null) {
+            if (option_kompiler) |kompiler| {
+                self.vm.gc.markObject(kompiler.function.asObj());
+                option_kompiler = kompiler.enclosing;
+            }
+        }
+    }
 };

@@ -2,6 +2,7 @@ const std = @import("std");
 
 const Value = @import("value.zig").Value;
 const ValueArray = @import("value.zig").ValueArray;
+const VM = @import("vm.zig").VM;
 
 pub const OpCode = enum(u8) {
     OP_CONSTANT,
@@ -40,24 +41,24 @@ pub const Chunk = struct {
     code: std.ArrayList(u8),
     lines: std.ArrayList(i32),
     constants: ValueArray,
-    allocator: std.mem.Allocator,
+    vm: *VM,
 
-    pub fn init(allocator: std.mem.Allocator) !Chunk {
-        const code = try std.ArrayList(u8).initCapacity(allocator, 0);
-        const lines = try std.ArrayList(i32).initCapacity(allocator, 0);
-        const constants = try ValueArray.init(allocator);
+    pub fn init(vm: *VM) !Chunk {
+        const code = try std.ArrayList(u8).initCapacity(vm.allocator, 0);
+        const lines = try std.ArrayList(i32).initCapacity(vm.allocator, 0);
+        const constants = try ValueArray.init(vm);
 
         return .{
             .code = code,
             .lines = lines,
             .constants = constants,
-            .allocator = allocator,
+            .vm = vm,
         };
     }
 
     pub fn deinit(self: *Chunk) void {
-        self.code.deinit(self.allocator);
-        self.lines.deinit(self.allocator);
+        self.code.deinit(self.vm.allocator);
+        self.lines.deinit(self.vm.allocator);
         self.constants.deinit();
     }
 
@@ -66,12 +67,14 @@ pub const Chunk = struct {
     }
 
     pub fn write(self: *Chunk, byte: u8, line: i32) !void {
-        try self.code.append(self.allocator, byte);
-        try self.lines.append(self.allocator, line);
+        try self.code.append(self.vm.allocator, byte);
+        try self.lines.append(self.vm.allocator, line);
     }
 
     pub fn addConstant(self: *Chunk, value: Value) i32 {
+        self.vm.push(value);
         self.constants.write(value);
+        _ = self.vm.pop();
         return @intCast(self.constants.values.items.len - 1);
     }
 };

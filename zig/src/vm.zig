@@ -2,9 +2,13 @@ const std = @import("std");
 
 const Chunk = @import("chunk.zig").Chunk;
 const common = @import("common.zig");
+const DEBUG_TRACE_EXECUTION = common.DEBUG_TRACE_EXECUTION;
+const DEBUG_STRESS_GC = common.DEBUG_STRESS_GC;
+const DEBUG_LOG_GC = common.DEBUG_LOG_GC;
 const UINT8_COUNT = common.UINT8_COUNT;
 const Compiler = @import("compiler.zig").Compiler;
 const disassembleInstruction = @import("debug.zig").disassembleInstruction;
+const GC = @import("memory.zig").GC;
 const ObjectNsp = @import("object.zig");
 const asString = ObjectNsp.asString;
 const isString = ObjectNsp.isString;
@@ -36,7 +40,9 @@ const numberVal = Value.numberVal;
 const valuesEqual = Value.valuesEqual;
 const boolVal = Value.boolVal;
 const nil_val = Value.nil_val;
+const ValueArray = @import("value.zig").ValueArray;
 
+const GC_HEAP_GROW_FACTOR = 2;
 const FRAMES_MAX = 64;
 const STACK_MAX = FRAMES_MAX * UINT8_COUNT;
 
@@ -80,11 +86,26 @@ pub const VM = struct {
     globals: Table,
     strings: Table,
     openUpvalues: ?*ObjUpvalue,
+
+    bytes_allocated: usize,
+    next_gc: usize,
     objects: ?*Obj,
+    gray_stack: std.ArrayList(*Obj),
+
+    compiler: ?*Compiler,
+
+    gc: GC,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator) !VM {
-        var vm: VM = .{
+    pub fn create(allocator: std.mem.Allocator) !*VM {
+        const vm = try allocator.create(VM);
+
+        const gray_stack = std.ArrayList(*Obj).initCapacity(allocator, 0) catch |err| {
+            std.debug.print("{s}", .{@errorName(err)});
+            std.process.exit(1);
+        };
+
+        vm.* = .{
             .frames = undefined,
             .frame_count = 0,
             .stack = undefined,
@@ -92,66 +113,30 @@ pub const VM = struct {
             .globals = undefined,
             .strings = undefined,
             .openUpvalues = null,
+            .bytes_allocated = 0,
+            .next_gc = 1024 * 1024,
             .objects = null,
+            .gray_stack = gray_stack,
+            .compiler = null,
+            .gc = undefined,
             .allocator = allocator,
         };
 
         vm.resetStack();
         vm.objects = null;
-        vm.globals = Table.init(allocator);
-        vm.strings = Table.init(allocator);
+        vm.globals = Table.init(vm);
+        vm.strings = Table.init(vm);
+        vm.gc = GC.init(vm);
         vm.defineNative("clock", clockNative);
 
         return vm;
     }
 
-    pub fn deinit(self: *VM) void {
+    pub fn destroy(self: *VM) void {
         self.globals.deinit();
         self.strings.deinit();
-        self.freeObjects();
-    }
-
-    fn freeObjects(self: *VM) void {
-        var option_object = self.objects;
-        while (option_object != null) {
-            if (option_object) |object| {
-                const option_next = object.next;
-                self.freeObject(object);
-                if (option_next) |next| {
-                    option_object = next;
-                } else {
-                    break;
-                }
-            }
-        }
-    }
-
-    fn freeObject(self: *VM, object: *Obj) void {
-        switch (object.type) {
-            .OBJ_CLOSURE => {
-                const closure = asClosure(objVal(object));
-                self.allocator.free(closure.upvalues);
-                self.allocator.destroy(closure);
-            },
-            .OBJ_FUNCTION => {
-                const function = asFunction(objVal(object));
-                function.deinit();
-                self.allocator.destroy(function);
-            },
-            .OBJ_NATIVE => {
-                const native = asNative(objVal(object));
-                self.allocator.destroy(native);
-            },
-            .OBJ_STRING => {
-                const string = asString(objVal(object));
-                self.allocator.free(string.chars);
-                self.allocator.destroy(string);
-            },
-            .OBJ_UPVALUE => {
-                const upvalue = asUpvalue(objVal(object));
-                self.allocator.destroy(upvalue);
-            },
-        }
+        self.gc.deinit();
+        self.allocator.destroy(self);
     }
 
     fn clockNative(arg_count: usize, args: []Value) Value {
@@ -225,6 +210,7 @@ pub const VM = struct {
 
     pub fn interpret(self: *VM, source: []const u8) !InterpretResult {
         var compiler = Compiler.init(self);
+        self.compiler = &compiler;
 
         const option_function = compiler.compile(source);
 
@@ -244,7 +230,7 @@ pub const VM = struct {
     fn run(self: *VM) !InterpretResult {
         var frame = &self.frames[self.frame_count - 1];
         while (true) {
-            if (common.DEBUG_TRACE_EXECUTION) {
+            if (DEBUG_TRACE_EXECUTION) {
                 std.debug.print("          ", .{});
                 for (self.stack[0..self.stackTop]) |slot| {
                     std.debug.print("[", .{});
@@ -543,8 +529,10 @@ pub const VM = struct {
             return upvalue.?;
         }
 
+        self.push(local.*);
         const created_upvalue = self.newUpvalue(local);
         created_upvalue.next = upvalue;
+        _ = self.pop();
 
         if (prev_upvalue == null) {
             self.openUpvalues = created_upvalue;
@@ -571,12 +559,14 @@ pub const VM = struct {
     }
 
     fn concatenate(self: *VM) !void {
-        const b = asString(self.pop());
-        const a = asString(self.pop());
+        const b = asString(self.peek(0));
+        const a = asString(self.peek(1));
 
         const chars = try std.mem.concat(self.allocator, u8, &.{ a.chars, b.chars });
 
         const result = try self.takeString(chars);
+        _ = self.pop();
+        _ = self.pop();
         self.push(objVal(result.asObj()));
     }
 
@@ -590,6 +580,8 @@ pub const VM = struct {
     }
 
     pub fn newClosure(self: *VM, function: *ObjFunction) *ObjClosure {
+        self.gc.reallocate(0, @sizeOf(ObjClosure));
+
         var upvalues = self.allocator.alloc(?*ObjUpvalue, function.upvalue_count) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
@@ -609,6 +601,8 @@ pub const VM = struct {
     }
 
     pub fn newUpvalue(self: *VM, slot: *Value) *ObjUpvalue {
+        self.gc.reallocate(0, @sizeOf(ObjUpvalue));
+
         const upvalue = self.allocator.create(ObjUpvalue) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
@@ -620,11 +614,13 @@ pub const VM = struct {
     }
 
     pub fn newFunction(self: *VM) *ObjFunction {
+        self.gc.reallocate(0, @sizeOf(ObjFunction));
+
         const function = self.allocator.create(ObjFunction) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
         };
-        function.* = ObjFunction.init(self.allocator, self.objects) catch |err| {
+        function.* = ObjFunction.init(self) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
         };
@@ -634,6 +630,8 @@ pub const VM = struct {
     }
 
     fn newNative(self: *VM, function: NativeFn) *ObjNative {
+        self.gc.reallocate(0, @sizeOf(ObjNative));
+
         const native = self.allocator.create(ObjNative) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
@@ -645,13 +643,19 @@ pub const VM = struct {
     }
 
     fn allocateString(self: *VM, chars: []const u8, hash: u32) *ObjString {
+        self.gc.reallocate(0, @sizeOf(ObjString));
+
         const string = self.allocator.create(ObjString) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
         };
         string.* = ObjString.init(self.objects, chars, hash);
         self.objects = &string.obj;
+
+        self.push(objVal(string.asObj()));
         _ = self.strings.set(string, nil_val);
+        _ = self.pop();
+
         return string;
     }
 

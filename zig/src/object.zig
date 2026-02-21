@@ -1,9 +1,11 @@
 const std = @import("std");
 
 const Chunk = @import("chunk.zig").Chunk;
+const DEBUG_LOG_GC = @import("common.zig").DEBUG_LOG_GC;
 const Value = @import("value.zig").Value;
 const nil_val = Value.nil_val;
 const asObj = Value.asObj;
+const VM = @import("vm.zig").VM;
 
 pub fn objType(value: Value) ObjType {
     return asObj(value).type;
@@ -59,7 +61,49 @@ const ObjType = enum {
 
 pub const Obj = struct {
     type: ObjType,
+    is_marked: bool,
     next: ?*Obj,
+
+    pub fn init(size: usize, @"type": ObjType, next: ?*Obj) Obj {
+        const obj: Obj = .{
+            .type = @"type",
+            .is_marked = false,
+            .next = next,
+        };
+        if (DEBUG_LOG_GC) {
+            std.debug.print(
+                "0x{x} allocate {d} for {d}\n",
+                .{ @intFromPtr(&obj), size, @"type" },
+            );
+        }
+
+        return obj;
+    }
+
+    /// Downcast , *Obj -> *ObjClosure
+    pub fn asObjClosure(obj: *Obj) *ObjClosure {
+        return @alignCast(@fieldParentPtr("obj", obj));
+    }
+
+    /// Downcast , *Obj -> *ObjString
+    pub fn asObjString(obj: *Obj) *ObjString {
+        return @alignCast(@fieldParentPtr("obj", obj));
+    }
+
+    /// Downcast , *Obj -> *ObjFunction
+    pub fn asObjFunction(obj: *Obj) *ObjFunction {
+        return @alignCast(@fieldParentPtr("obj", obj));
+    }
+
+    /// Downcast , *Obj -> *ObjUpvalue
+    pub fn asObjUpvalue(obj: *Obj) *ObjUpvalue {
+        return @alignCast(@fieldParentPtr("obj", obj));
+    }
+
+    /// Downcast , *Obj -> *ObjNative
+    pub fn asObjNative(obj: *Obj) *ObjNative {
+        return @alignCast(@fieldParentPtr("obj", obj));
+    }
 };
 
 pub const ObjFunction = struct {
@@ -68,17 +112,16 @@ pub const ObjFunction = struct {
     upvalue_count: usize,
     chunk: Chunk, // owned?
     name: ?*ObjString,
+    vm: *VM,
 
-    pub fn init(allocator: std.mem.Allocator, obj: ?*Obj) !ObjFunction {
+    pub fn init(vm: *VM) !ObjFunction {
         return .{
-            .obj = .{
-                .type = .OBJ_FUNCTION,
-                .next = obj,
-            },
+            .obj = Obj.init(@sizeOf(ObjFunction), .OBJ_FUNCTION, vm.objects),
             .arity = 0,
             .upvalue_count = 0,
-            .chunk = try Chunk.init(allocator),
+            .chunk = try Chunk.init(vm),
             .name = null,
+            .vm = vm,
         };
     }
 
@@ -101,10 +144,7 @@ pub const ObjNative = struct {
 
     pub fn init(obj: ?*Obj, function: NativeFn) ObjNative {
         return .{
-            .obj = .{
-                .type = .OBJ_NATIVE,
-                .next = obj,
-            },
+            .obj = Obj.init(@sizeOf(ObjNative), .OBJ_NATIVE, obj),
             .function = function,
         };
     }
@@ -122,10 +162,7 @@ pub const ObjString = struct {
 
     pub fn init(obj: ?*Obj, chars: []const u8, hash: u32) ObjString {
         return .{
-            .obj = .{
-                .type = .OBJ_STRING,
-                .next = obj,
-            },
+            .obj = Obj.init(@sizeOf(ObjString), .OBJ_STRING, obj),
             .chars = chars,
             .hash = hash,
         };
@@ -150,10 +187,7 @@ pub const ObjUpvalue = struct {
 
     pub fn init(obj: ?*Obj, slot: *Value) ObjUpvalue {
         return .{
-            .obj = .{
-                .type = .OBJ_UPVALUE,
-                .next = obj,
-            },
+            .obj = Obj.init(@sizeOf(ObjUpvalue), .OBJ_UPVALUE, obj),
             .location = slot,
             .closed = nil_val,
             .next = null,
@@ -174,10 +208,7 @@ pub const ObjClosure = struct {
 
     pub fn init(obj: ?*Obj, upvalues: []?*ObjUpvalue, function: *ObjFunction) ObjClosure {
         return .{
-            .obj = .{
-                .type = .OBJ_CLOSURE,
-                .next = obj,
-            },
+            .obj = Obj.init(@sizeOf(ObjClosure), .OBJ_CLOSURE, obj),
             .function = function,
             .upvalues = upvalues,
             .upvalue_count = function.upvalue_count,

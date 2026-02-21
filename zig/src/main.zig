@@ -92,16 +92,16 @@ pub fn main() !void {
     defer _ = debug_allocator.deinit(); // This checks for leaks.
     const allocator = debug_allocator.allocator();
 
-    var vm = try VM.init(allocator);
-    defer vm.deinit();
+    var vm = try VM.create(allocator);
+    defer vm.destroy();
 
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
     if (args.len == 1) {
-        try repl(allocator, &vm);
+        try repl(allocator, vm);
     } else if (args.len == 2) {
-        try runFile(allocator, &vm, args[1]);
+        try runFile(allocator, vm, args[1]);
     } else {
         std.debug.print("Usage: zlox [path]\n", .{});
         std.process.exit(64);

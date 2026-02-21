@@ -5,6 +5,7 @@ const Value = @import("value.zig").Value;
 const nil_val = Value.nil_val;
 const isNil = Value.isNil;
 const boolVal = Value.boolVal;
+const VM = @import("vm.zig").VM;
 
 const TABLE_MAX_LOAD = 0.75;
 
@@ -31,20 +32,20 @@ pub const Table = struct {
     entries: []Entry,
     count: usize,
     capacity: usize,
-    allocator: std.mem.Allocator,
+    vm: *VM,
 
-    pub fn init(allocator: std.mem.Allocator) Table {
+    pub fn init(vm: *VM) Table {
         return .{
             .count = 0,
             .capacity = 0,
             .entries = &.{},
-            .allocator = allocator,
+            .vm = vm,
         };
     }
 
     pub fn deinit(self: *Table) void {
-        self.allocator.free(self.entries);
-        self.* = Table.init(self.allocator);
+        self.vm.allocator.free(self.entries);
+        self.* = Table.init(self.vm);
     }
 
     fn findEntry(entries: []Entry, key: *ObjString) *Entry {
@@ -83,7 +84,7 @@ pub const Table = struct {
     }
 
     fn adjustCapacity(self: *Table, capacity: usize) void {
-        const entries = self.allocator.alloc(Entry, capacity) catch |err| {
+        const entries = self.vm.allocator.alloc(Entry, capacity) catch |err| {
             std.debug.print("{s}\n", .{@errorName(err)});
             @panic("OOM");
         };
@@ -100,7 +101,7 @@ pub const Table = struct {
             self.count += 1;
         }
 
-        self.allocator.free(self.entries);
+        self.vm.allocator.free(self.entries);
         self.entries = entries;
         self.capacity = capacity;
     }
@@ -159,6 +160,27 @@ pub const Table = struct {
             }
 
             index = (index + 1) % self.capacity;
+        }
+    }
+
+    pub fn removeWhite(self: *Table) void {
+        for (0..self.capacity) |i| {
+            const entry = self.entries[i];
+            if (entry.key) |key| {
+                if (!key.obj.is_marked) {
+                    _ = self.delete(key);
+                }
+            }
+        }
+    }
+
+    pub fn markTable(self: *Table) void {
+        for (0..self.capacity) |i| {
+            const entry = self.entries[i];
+            if (entry.key) |key| {
+                self.vm.gc.markObject(key.asObj());
+            }
+            self.vm.gc.markValue(entry.value);
         }
     }
 };

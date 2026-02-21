@@ -4,6 +4,7 @@ const asString = @import("object.zig").asString;
 const Obj = @import("object.zig").Obj;
 const ObjString = @import("object.zig").ObjString;
 const printObject = @import("object.zig").printObject;
+const VM = @import("vm.zig").VM;
 
 const ValueType = enum {
     bool,
@@ -100,21 +101,21 @@ pub const Value = union(ValueType) {
 
 pub const ValueArray = struct {
     values: std.ArrayList(Value),
-    allocator: std.mem.Allocator,
+    vm: *VM,
 
     // void initValueArray(ValueArray* array);
-    pub fn init(allocator: std.mem.Allocator) !ValueArray {
-        const values = try std.ArrayList(Value).initCapacity(allocator, 0);
+    pub fn init(vm: *VM) !ValueArray {
+        const values = try std.ArrayList(Value).initCapacity(vm.allocator, 0);
 
         return .{
             .values = values,
-            .allocator = allocator,
+            .vm = vm,
         };
     }
 
     // void freeValueArray(ValueArray* array);
     pub fn deinit(self: *ValueArray) void {
-        self.values.deinit(self.allocator);
+        self.values.deinit(self.vm.allocator);
     }
 
     pub fn count(self: *ValueArray) i32 {
@@ -123,7 +124,7 @@ pub const ValueArray = struct {
 
     // void writeValueArray(ValueArray* array, Value value);
     pub fn write(self: *ValueArray, value: Value) void {
-        self.values.append(self.allocator, value) catch |err| {
+        self.values.append(self.vm.allocator, value) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
         };
