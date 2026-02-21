@@ -91,7 +91,7 @@ pub const Obj = struct {
         };
         if (DEBUG_LOG_GC) {
             std.debug.print(
-                "0x{x} allocate {d} for {d}\n",
+                "0x{x} allocate {d} for {}\n",
                 .{ @intFromPtr(&obj), size, @"type" },
             );
         }

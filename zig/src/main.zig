@@ -3,11 +3,12 @@ const Io = std.Io;
 
 const Chunk = @import("chunk.zig").Chunk;
 const disassembleChunk = @import("debug.zig").disassembleChunk;
+const GcTrackingAllocator = @import("memory.zig").GcTrackingAllocator;
 const OpCode = @import("chunk.zig").OpCode;
 const VM = @import("vm.zig").VM;
 
-fn repl(allocator: std.mem.Allocator, vm: *VM) !void {
-    var threaded: std.Io.Threaded = .init(allocator, .{});
+fn repl(vm: *VM) !void {
+    var threaded: std.Io.Threaded = .init(vm.allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -24,9 +25,11 @@ fn repl(allocator: std.mem.Allocator, vm: *VM) !void {
         try stdout.flush();
 
         const line = stdin.takeDelimiterInclusive('\n') catch |err| {
+            if (err == error.EndOfStream) break;
             std.debug.print("\n{s}\n", .{@errorName(err)});
             break;
         };
+        // should not call allocator.free(line) for it is managed by stdin.buffer
 
         _ = try vm.interpret(line);
     }
@@ -61,7 +64,6 @@ fn readFile(vm: *VM, path: []const u8) []const u8 {
         std.process.exit(74);
     };
     const file_size = stat.size;
-    vm.gc.reallocate(0, @sizeOf(u8) * file_size);
     const data = vm.allocator.alloc(u8, file_size) catch |err| {
         std.debug.print("Not enough memory to read \"{s}\": {s}.\n", .{ path, @errorName(err) });
         std.process.exit(74);
@@ -91,16 +93,27 @@ pub fn main() !void {
     // In order to allocate memory we must construct an `Allocator` instance.
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
     defer _ = debug_allocator.deinit(); // This checks for leaks.
-    const allocator = debug_allocator.allocator();
+    const gpa = debug_allocator.allocator();
 
-    var vm = try VM.create(allocator);
-    defer vm.destroy();
+    // 1. Allocate the structures first
+    const gc_tracker = try gpa.create(GcTrackingAllocator);
+    defer gpa.destroy(gc_tracker);
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const vm = try gpa.create(VM);
+    defer gpa.destroy(vm);
+
+    // 2. Cross-link them so the tracker knows which VM to report to
+    gc_tracker.* = GcTrackingAllocator.init(vm, gpa);
+
+    // 3. Initialize the VM logic using the tracking allocator
+    try vm.init(gc_tracker.allocator());
+    defer vm.deinit();
+
+    const args = try std.process.argsAlloc(gpa);
+    defer std.process.argsFree(gpa, args);
 
     if (args.len == 1) {
-        try repl(allocator, vm);
+        try repl(vm);
     } else if (args.len == 2) {
         try runFile(vm, args[1]);
     } else {

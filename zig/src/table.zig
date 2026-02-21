@@ -84,7 +84,6 @@ pub const Table = struct {
     }
 
     fn adjustCapacity(self: *Table, capacity: usize) void {
-        self.vm.gc.reallocate(self.capacity * @sizeOf(Entry), capacity * @sizeOf(Entry));
         const entries = self.vm.allocator.alloc(Entry, capacity) catch |err| {
             std.debug.print("{s}\n", .{@errorName(err)});
             @panic("OOM");

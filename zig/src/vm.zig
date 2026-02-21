@@ -9,6 +9,7 @@ const UINT8_COUNT = common.UINT8_COUNT;
 const Compiler = @import("compiler.zig").Compiler;
 const disassembleInstruction = @import("debug.zig").disassembleInstruction;
 const GC = @import("memory.zig").GC;
+const GcTrackingAllocator = @import("memory.zig").GcTrackingAllocator;
 const ObjectNsp = @import("object.zig");
 const asString = ObjectNsp.asString;
 const isString = ObjectNsp.isString;
@@ -102,14 +103,7 @@ pub const VM = struct {
     gc: GC,
     allocator: std.mem.Allocator,
 
-    pub fn create(allocator: std.mem.Allocator) !*VM {
-        const vm = try allocator.create(VM);
-
-        const gray_stack = std.ArrayList(*Obj).initCapacity(allocator, 0) catch |err| {
-            std.debug.print("{s}", .{@errorName(err)});
-            std.process.exit(1);
-        };
-
+    pub fn init(vm: *VM, allocator: std.mem.Allocator) !void {
         vm.* = .{
             .frames = undefined,
             .frame_count = 0,
@@ -121,27 +115,29 @@ pub const VM = struct {
             .bytes_allocated = 0,
             .next_gc = 1024 * 1024,
             .objects = null,
-            .gray_stack = gray_stack,
+            .gray_stack = undefined, // Set later
             .compiler = null,
-            .gc = undefined,
+            .gc = undefined, // Set later
             .allocator = allocator,
         };
+
+        // 1. Setup basic GC state so the allocator can track immediately
+        vm.gc = GC.init(vm);
+
+        // 2. Now safe to use the allocator (which calls vm.gc.reallocate)
+        vm.gray_stack = try std.ArrayList(*Obj).initCapacity(allocator, 0);
 
         vm.resetStack();
         vm.objects = null;
         vm.globals = Table.init(vm);
         vm.strings = Table.init(vm);
-        vm.gc = GC.init(vm);
         vm.defineNative("clock", clockNative);
-
-        return vm;
     }
 
-    pub fn destroy(self: *VM) void {
+    pub fn deinit(self: *VM) void {
         self.globals.deinit();
         self.strings.deinit();
         self.gc.deinit();
-        self.allocator.destroy(self);
     }
 
     fn clockNative(arg_count: usize, args: []Value) Value {
@@ -624,8 +620,6 @@ pub const VM = struct {
     }
 
     pub fn newClass(self: *VM, name: *ObjString) *ObjClass {
-        self.gc.reallocate(0, @sizeOf(ObjClass));
-
         const klass = self.allocator.create(ObjClass) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
@@ -637,7 +631,6 @@ pub const VM = struct {
     }
 
     pub fn newClosure(self: *VM, function: *ObjFunction) *ObjClosure {
-        self.gc.reallocate(0, function.upvalue_count * (@sizeOf(?*ObjUpvalue)));
         var upvalues = self.allocator.alloc(?*ObjUpvalue, function.upvalue_count) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
@@ -646,7 +639,6 @@ pub const VM = struct {
             upvalues[i] = null;
         }
 
-        self.gc.reallocate(0, @sizeOf(ObjClosure));
         const closure = self.allocator.create(ObjClosure) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
@@ -658,8 +650,6 @@ pub const VM = struct {
     }
 
     pub fn newUpvalue(self: *VM, slot: *Value) *ObjUpvalue {
-        self.gc.reallocate(0, @sizeOf(ObjUpvalue));
-
         const upvalue = self.allocator.create(ObjUpvalue) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
@@ -671,8 +661,6 @@ pub const VM = struct {
     }
 
     pub fn newFunction(self: *VM) *ObjFunction {
-        self.gc.reallocate(0, @sizeOf(ObjFunction));
-
         const function = self.allocator.create(ObjFunction) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
@@ -687,8 +675,6 @@ pub const VM = struct {
     }
 
     pub fn newInstance(self: *VM, klass: *ObjClass) *ObjInstance {
-        self.gc.reallocate(0, @sizeOf(ObjInstance));
-
         const instance = self.allocator.create(ObjInstance) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
@@ -700,8 +686,6 @@ pub const VM = struct {
     }
 
     fn newNative(self: *VM, function: NativeFn) *ObjNative {
-        self.gc.reallocate(0, @sizeOf(ObjNative));
-
         const native = self.allocator.create(ObjNative) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
@@ -713,8 +697,6 @@ pub const VM = struct {
     }
 
     fn allocateString(self: *VM, chars: []const u8, hash: u32) *ObjString {
-        self.gc.reallocate(0, @sizeOf(ObjString));
-
         const string = self.allocator.create(ObjString) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic("OOM");
@@ -751,7 +733,6 @@ pub const VM = struct {
             return interned;
         }
 
-        self.gc.reallocate(0, chars.len * @sizeOf(u8));
         const heap_chars = self.allocator.dupe(u8, chars) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             @panic(@errorName(err));

@@ -41,7 +41,8 @@ pub const GC = struct {
 
     /// WARNING: hard to mimic the c impl
     pub fn reallocate(self: *GC, old_size: usize, new_size: usize) void {
-        self.vm.bytes_allocated += new_size - old_size;
+        self.vm.bytes_allocated += new_size;
+        self.vm.bytes_allocated -= old_size;
         if (DEBUG_STRESS_GC) {
             self.collectGarbage();
         }
@@ -124,7 +125,7 @@ pub const GC = struct {
     fn freeObject(self: *GC, object: *Obj) void {
         if (DEBUG_LOG_GC) {
             std.debug.print(
-                "0x{x} free type {d}\n",
+                "0x{x} free type {}\n",
                 .{ @intFromPtr(object), object.type },
             );
         }
@@ -254,5 +255,79 @@ pub const GC = struct {
             }
         }
         self.vm.gray_stack.clearAndFree(self.allocator);
+    }
+};
+
+pub const GcTrackingAllocator = struct {
+    vm: *VM,
+    backing_allocator: std.mem.Allocator,
+
+    const Self = @This();
+
+    pub fn init(vm: *VM, backing_allocator: std.mem.Allocator) Self {
+        return Self{
+            .vm = vm,
+            .backing_allocator = backing_allocator,
+        };
+    }
+
+    pub fn allocator(self: *Self) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &vtable,
+        };
+    }
+
+    const vtable = std.mem.Allocator.VTable{
+        .alloc = alloc,
+        .resize = resize,
+        .remap = remap,
+        .free = free,
+    };
+
+    fn alloc(
+        ctx: *anyopaque,
+        len: usize,
+        ptr_align: std.mem.Alignment,
+        ret_addr: usize,
+    ) ?[*]u8 {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.vm.gc.reallocate(0, len);
+        return self.backing_allocator.rawAlloc(len, ptr_align, ret_addr);
+    }
+
+    fn resize(
+        ctx: *anyopaque,
+        buf: []u8,
+        buf_align: std.mem.Alignment,
+        new_len: usize,
+        ret_addr: usize,
+    ) bool {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.vm.gc.reallocate(buf.len, new_len);
+        return self.backing_allocator.rawResize(buf, buf_align, new_len, ret_addr);
+    }
+
+    fn remap(
+        ctx: *anyopaque,
+        buf: []u8,
+        buf_align: std.mem.Alignment,
+        new_len: usize,
+        ret_addr: usize,
+    ) ?[*]u8 {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.vm.gc.reallocate(buf.len, new_len);
+        return self.backing_allocator.rawRemap(buf, buf_align, new_len, ret_addr);
+    }
+
+    fn free(
+        ctx: *anyopaque,
+        buf: []u8,
+        buf_align: std.mem.Alignment,
+        ret_addr: usize,
+    ) void {
+        const self: *Self = @ptrCast(@alignCast(ctx));
+        self.vm.gc.reallocate(buf.len, 0);
+        self.backing_allocator.rawFree(buf, buf_align, ret_addr);
     }
 };
