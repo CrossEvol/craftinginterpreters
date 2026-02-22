@@ -16,6 +16,7 @@ const isString = ObjectNsp.isString;
 const Obj = ObjectNsp.Obj;
 const ObjFunction = ObjectNsp.ObjFunction;
 const isInstance = ObjectNsp.isInstance;
+const isClass = ObjectNsp.isClass;
 const asInstance = ObjectNsp.asInstance;
 const asBoundMethod = ObjectNsp.asBoundMethod;
 const ObjClosure = ObjectNsp.ObjClosure;
@@ -328,6 +329,14 @@ pub const VM = struct {
                     _ = self.pop();
                     self.push(value);
                 },
+                .OP_GET_SUPER => {
+                    const name = self.readString();
+                    const super_class = asClass(self.pop());
+
+                    if (!self.bindMethod(super_class, name)) {
+                        return .INTERPRET_RUNTIME_ERROR;
+                    }
+                },
                 .OP_EQUAL => {
                     const b = self.pop();
                     const a = self.pop();
@@ -421,6 +430,15 @@ pub const VM = struct {
                     }
                     frame = &self.frames[self.frame_count - 1];
                 },
+                .OP_SUPER_INVOKE => {
+                    const method = self.readString();
+                    const arg_count = self.readByte();
+                    const super_class = asClass(self.pop());
+                    if (!self.invokeFromClass(super_class, method, arg_count)) {
+                        return .INTERPRET_RUNTIME_ERROR;
+                    }
+                    frame = &self.frames[self.frame_count - 1];
+                },
                 .OP_CLOSURE => {
                     const function = asFunction(self.readConstant());
                     const closure = self.newClosure(function);
@@ -455,6 +473,17 @@ pub const VM = struct {
                 .OP_CLASS => {
                     const klass = self.newClass(self.readString());
                     self.push(objVal(klass.asObj()));
+                },
+                .OP_INHERIT => {
+                    const super_class = self.peek(1);
+                    if (!isClass(super_class)) {
+                        self.runtimeError("Superclass must be a class.", .{});
+                        return .INTERPRET_RUNTIME_ERROR;
+                    }
+
+                    const sub_class = asClass(self.peek(0));
+                    asClass(super_class).methods.addAll(&sub_class.methods);
+                    _ = self.pop(); // Subclass.
                 },
                 .OP_METHOD => {
                     self.defineMethod(self.readString());

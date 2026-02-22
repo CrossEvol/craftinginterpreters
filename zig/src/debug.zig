@@ -86,6 +86,7 @@ pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
         .OP_SET_UPVALUE => return byteInstruction("OP_SET_UPVALUE", chunk, offset),
         .OP_GET_PROPERTY => return constantInstruction("OP_GET_PROPERTY", chunk, offset),
         .OP_SET_PROPERTY => return constantInstruction("OP_SET_PROPERTY", chunk, offset),
+        .OP_GET_SUPER => return constantInstruction("OP_GET_SUPER", chunk, offset),
         .OP_EQUAL => return simpleInstruction("OP_EQUAL", offset),
         .OP_GREATER => return simpleInstruction("OP_GREATER", offset),
         .OP_LESS => return simpleInstruction("OP_LESS", offset),
@@ -101,6 +102,7 @@ pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
         .OP_LOOP => return jumpInstruction("OP_LOOP", -1, chunk, offset),
         .OP_CALL => return byteInstruction("OP_CALL", chunk, offset),
         .OP_INVOKE => return invokeInstruction("OP_INVOKE", chunk, offset),
+        .OP_SUPER_INVOKE => return invokeInstruction("OP_SUPER_INVOKE", chunk, offset),
         .OP_CLOSURE => {
             var offsetU: usize = @intCast(offset);
             offsetU += 1;
@@ -126,6 +128,7 @@ pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
         .OP_CLOSE_UPVALUE => return simpleInstruction("OP_CLOSE_UPVALUE", offset),
         .OP_RETURN => return simpleInstruction("OP_RETURN", offset),
         .OP_CLASS => return constantInstruction("OP_CLASS", chunk, offset),
+        .OP_INHERIT => return simpleInstruction("OP_INHERIT", offset),
         .OP_METHOD => return constantInstruction("OP_METHOD", chunk, offset),
         else => {
             std.debug.print("Unknown opcode {d}\n", .{instruction});
