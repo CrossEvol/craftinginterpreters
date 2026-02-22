@@ -28,11 +28,14 @@ const GC_HEAP_GROW_FACTOR = 2;
 pub const GC = struct {
     vm: *VM,
     allocator: std.mem.Allocator,
+    // the allocator which will not trigger gc
+    gray_allocator: std.mem.Allocator,
 
-    pub fn init(vm: *VM) GC {
+    pub fn init(vm: *VM, gray_allocator: std.mem.Allocator) GC {
         return .{
             .vm = vm,
             .allocator = vm.allocator,
+            .gray_allocator = gray_allocator,
         };
     }
 
@@ -44,11 +47,14 @@ pub const GC = struct {
     pub fn reallocate(self: *GC, old_size: usize, new_size: usize) void {
         self.vm.bytes_allocated += new_size;
         self.vm.bytes_allocated -= old_size;
-        if (DEBUG_STRESS_GC) {
-            self.collectGarbage();
-        }
-        if (self.vm.bytes_allocated > self.vm.next_gc) {
-            self.collectGarbage();
+
+        if (new_size > old_size) {
+            if (DEBUG_STRESS_GC) {
+                self.collectGarbage();
+            }
+            if (self.vm.bytes_allocated > self.vm.next_gc) {
+                self.collectGarbage();
+            }
         }
     }
 
@@ -63,7 +69,7 @@ pub const GC = struct {
 
         object.is_marked = true;
 
-        self.vm.gray_stack.?.append(self.allocator, object) catch |err| {
+        self.vm.gray_stack.?.append(self.gray_allocator, object) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             std.process.exit(1);
         };
@@ -270,7 +276,7 @@ pub const GC = struct {
             }
         }
 
-        self.vm.gray_stack.?.clearAndFree(self.allocator);
+        self.vm.gray_stack.?.clearAndFree(self.gray_allocator);
     }
 };
 

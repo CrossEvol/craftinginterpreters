@@ -106,7 +106,7 @@ pub fn main() !void {
     gc_tracker.* = GcTrackingAllocator.init(vm, gpa);
 
     // 3. Initialize the VM logic using the tracking allocator
-    try vm.init(gc_tracker.allocator());
+    try vm.init(gc_tracker.allocator(), std.heap.page_allocator);
     defer vm.deinit();
 
     const args = try std.process.argsAlloc(gpa);

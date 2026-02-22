@@ -108,7 +108,8 @@ pub const VM = struct {
     gc: GC,
     allocator: std.mem.Allocator,
 
-    pub fn init(vm: *VM, allocator: std.mem.Allocator) !void {
+    /// gray_stack need another allocator, orelse it will trigger recursive gc then crash the memory
+    pub fn init(vm: *VM, allocator: std.mem.Allocator, gray_allocator: std.mem.Allocator) !void {
         vm.* = .{
             .frames = undefined,
             .frame_count = 0,
@@ -128,10 +129,10 @@ pub const VM = struct {
         };
 
         // 1. Setup basic GC state so the allocator can track immediately
-        vm.gc = GC.init(vm);
+        vm.gc = GC.init(vm, gray_allocator);
 
         // 2. Now safe to use the allocator (which calls vm.gc.reallocate)
-        vm.gray_stack = try std.ArrayList(*Obj).initCapacity(allocator, 0);
+        vm.gray_stack = try std.ArrayList(*Obj).initCapacity(gray_allocator, 0);
 
         vm.resetStack();
         vm.objects = null;
