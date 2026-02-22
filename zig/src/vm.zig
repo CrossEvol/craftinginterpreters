@@ -249,6 +249,30 @@ pub const VM = struct {
 
     fn run(self: *VM) !InterpretResult {
         var frame = &self.frames[self.frame_count - 1];
+
+        const reader = struct {
+            inline fn readByte(f: *CallFrame) u8 {
+                const byte = f.closure.function.chunk.code.items[f.ip];
+                f.ip += 1;
+                return byte;
+            }
+
+            inline fn readShort(f: *CallFrame) u16 {
+                f.ip += 2;
+                const msb = f.closure.function.chunk.code.items[f.ip - 2];
+                const lsb = f.closure.function.chunk.code.items[f.ip - 1];
+                return @intCast(@as(u16, msb) << 8 | lsb);
+            }
+
+            inline fn readConstant(f: *CallFrame) Value {
+                return f.closure.function.chunk.constants.values.items[readByte(f)];
+            }
+
+            inline fn readString(f: *CallFrame) *ObjString {
+                return asString(readConstant(f));
+            }
+        };
+
         while (true) {
             if (DEBUG_TRACE_EXECUTION) {
                 std.debug.print("          ", .{});
@@ -261,10 +285,10 @@ pub const VM = struct {
                 _ = disassembleInstruction(&frame.closure.function.chunk, @intCast(frame.ip));
             }
 
-            const instruction: OpCode = @enumFromInt(self.readByte());
+            const instruction: OpCode = @enumFromInt(reader.readByte(frame));
             switch (instruction) {
                 .OP_CONSTANT => {
-                    const constant = self.readConstant();
+                    const constant = reader.readConstant(frame);
                     self.push(constant);
                 },
                 .OP_NIL => self.push(nil_val),
@@ -272,15 +296,15 @@ pub const VM = struct {
                 .OP_FALSE => self.push(boolVal(false)),
                 .OP_POP => _ = self.pop(),
                 .OP_GET_LOCAL => {
-                    const slot = self.readByte();
+                    const slot = reader.readByte(frame);
                     self.push(frame.slots[slot]); // [slot]
                 },
                 .OP_SET_LOCAL => {
-                    const slot = self.readByte();
+                    const slot = reader.readByte(frame);
                     frame.slots[slot] = self.peek(0);
                 },
                 .OP_GET_GLOBAL => {
-                    const name = self.readString();
+                    const name = reader.readString(frame);
                     const value, const ok = self.globals.get(name);
                     if (!ok) {
                         self.runtimeError("Undefined variable '{s}'.", .{name.chars});
@@ -289,13 +313,13 @@ pub const VM = struct {
                     self.push(value);
                 },
                 .OP_DEFINE_GLOBAL => {
-                    const name = self.readString();
+                    const name = reader.readString(frame);
                     const value = self.peek(0);
                     _ = self.globals.set(name, value);
                     _ = self.pop();
                 },
                 .OP_SET_GLOBAL => {
-                    const name = self.readString();
+                    const name = reader.readString(frame);
                     const value = self.peek(0);
                     const is_new = self.globals.set(name, value);
                     if (is_new) {
@@ -305,11 +329,11 @@ pub const VM = struct {
                     }
                 },
                 .OP_GET_UPVALUE => {
-                    const slot = self.readByte();
+                    const slot = reader.readByte(frame);
                     self.push(frame.closure.upvalues[slot].?.location.*); // [slot]
                 },
                 .OP_SET_UPVALUE => {
-                    const slot = self.readByte();
+                    const slot = reader.readByte(frame);
                     frame.closure.upvalues[slot].?.location.* = self.peek(0);
                 },
                 .OP_GET_PROPERTY => {
@@ -319,7 +343,7 @@ pub const VM = struct {
                     }
 
                     const instance = asInstance(self.peek(0));
-                    const name = self.readString();
+                    const name = reader.readString(frame);
 
                     const value, const ok = instance.fields.get(name);
                     if (ok) {
@@ -336,13 +360,13 @@ pub const VM = struct {
                     }
 
                     const instance = asInstance(self.peek(1));
-                    _ = instance.fields.set(self.readString(), self.peek(0));
+                    _ = instance.fields.set(reader.readString(frame), self.peek(0));
                     const value = self.pop();
                     _ = self.pop();
                     self.push(value);
                 },
                 .OP_GET_SUPER => {
-                    const name = self.readString();
+                    const name = reader.readString(frame);
                     const super_class = asClass(self.pop());
 
                     if (!self.bindMethod(super_class, name)) {
@@ -414,37 +438,37 @@ pub const VM = struct {
                     std.debug.print("\n", .{});
                 },
                 .OP_JUMP => {
-                    const offset = self.readShort();
+                    const offset = reader.readShort(frame);
                     frame.ip += @as(usize, @intCast(offset));
                 },
                 .OP_JUMP_IF_FALSE => {
-                    const offset = self.readShort();
+                    const offset = reader.readShort(frame);
                     if (isFalsy(self.peek(0))) {
                         frame.ip += @as(usize, @intCast(offset));
                     }
                 },
                 .OP_LOOP => {
-                    const offset = self.readShort();
+                    const offset = reader.readShort(frame);
                     frame.ip -= @as(usize, @intCast(offset));
                 },
                 .OP_CALL => {
-                    const arg_count = self.readByte();
+                    const arg_count = reader.readByte(frame);
                     if (!self.callValue(self.peek(arg_count), arg_count)) {
                         return .INTERPRET_RUNTIME_ERROR;
                     }
                     frame = &self.frames[self.frame_count - 1];
                 },
                 .OP_INVOKE => {
-                    const method = self.readString();
-                    const arg_count = self.readByte();
+                    const method = reader.readString(frame);
+                    const arg_count = reader.readByte(frame);
                     if (!self.invoke(method, arg_count)) {
                         return .INTERPRET_RUNTIME_ERROR;
                     }
                     frame = &self.frames[self.frame_count - 1];
                 },
                 .OP_SUPER_INVOKE => {
-                    const method = self.readString();
-                    const arg_count = self.readByte();
+                    const method = reader.readString(frame);
+                    const arg_count = reader.readByte(frame);
                     const super_class = asClass(self.pop());
                     if (!self.invokeFromClass(super_class, method, arg_count)) {
                         return .INTERPRET_RUNTIME_ERROR;
@@ -452,12 +476,12 @@ pub const VM = struct {
                     frame = &self.frames[self.frame_count - 1];
                 },
                 .OP_CLOSURE => {
-                    const function = asFunction(self.readConstant());
+                    const function = asFunction(reader.readConstant(frame));
                     const closure = self.newClosure(function);
                     self.push(objVal(closure.asObj()));
                     for (0..closure.function.upvalue_count) |i| {
-                        const is_local = self.readByte();
-                        const index = self.readByte();
+                        const is_local = reader.readByte(frame);
+                        const index = reader.readByte(frame);
                         if (is_local > 0) {
                             closure.upvalues[i] = self.captureUpvalue(&frame.slots[index]);
                         } else {
@@ -483,7 +507,7 @@ pub const VM = struct {
                     frame = &self.frames[self.frame_count - 1];
                 },
                 .OP_CLASS => {
-                    const klass = self.newClass(self.readString());
+                    const klass = self.newClass(reader.readString(frame));
                     self.push(objVal(klass.asObj()));
                 },
                 .OP_INHERIT => {
@@ -498,35 +522,11 @@ pub const VM = struct {
                     _ = self.pop(); // Subclass.
                 },
                 .OP_METHOD => {
-                    self.defineMethod(self.readString());
+                    self.defineMethod(reader.readString(frame));
                 },
                 else => {},
             }
         }
-    }
-
-    fn readByte(self: *VM) u8 {
-        const frame = &self.frames[self.frame_count - 1];
-        const byte = frame.closure.function.chunk.code.items[frame.ip];
-        frame.ip += 1;
-        return byte;
-    }
-
-    fn readShort(self: *VM) u16 {
-        const frame = &self.frames[self.frame_count - 1];
-        frame.ip += 2;
-        const msb = frame.closure.function.chunk.code.items[frame.ip - 2];
-        const lsb = frame.closure.function.chunk.code.items[frame.ip - 1];
-        return @intCast(@as(u16, msb) << 8 | lsb);
-    }
-
-    fn readConstant(self: *VM) Value {
-        const frame = &self.frames[self.frame_count - 1];
-        return frame.closure.function.chunk.constants.values.items[self.readByte()];
-    }
-
-    fn readString(self: *VM) *ObjString {
-        return asString(self.readConstant());
     }
 
     fn binaryOp(self: *VM, comptime op: BinaryOp) !InterpretResult {
