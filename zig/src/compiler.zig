@@ -251,7 +251,7 @@ pub const Compiler = struct {
         self.emitByte(OpCode.OP_LOOP);
 
         const offset = self.currentChunk().count() - loop_start + 2;
-        if (offset > UINT16_MAX) {
+        if (offset > @as(i32, @intCast(UINT16_MAX))) {
             self.@"error"("Loop body too large.");
         }
 
@@ -531,7 +531,7 @@ pub const Compiler = struct {
                 if (arg_count == 255) {
                     self.@"error"("Can't have more than 255 arguments.");
                 }
-                arg_count += 1;
+                arg_count +%= 1;
                 if (!self.match(.TOKEN_COMMA)) break;
             }
         }

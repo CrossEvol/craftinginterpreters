@@ -50,6 +50,10 @@ test: debug jlox $(TEST_SNAPSHOT)
 	@- dart $(TEST_SNAPSHOT) clox
 	@ dart $(TEST_SNAPSHOT) jlox
 
+# Run the tests for the final version of zlox.
+test_zlox: zlox $(TEST_SNAPSHOT)
+	@ dart $(TEST_SNAPSHOT) zlox
+
 # Run the tests for the final version of clox.
 test_clox: debug $(TEST_SNAPSHOT)
 	@ dart $(TEST_SNAPSHOT) clox
@@ -79,6 +83,10 @@ $(TEST_SNAPSHOT): $(TOOL_SOURCES)
 # Compile a debug build of clox.
 debug:
 	@ $(MAKE) -f util/c.make NAME=cloxd MODE=debug SOURCE_DIR=c
+
+# Compile the Zig interpreter.
+zlox:
+	@ zig build-exe zig/src/main.zig --name zlox -lc 
 
 # Compile the C interpreter.
 clox:

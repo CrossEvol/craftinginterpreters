@@ -710,6 +710,17 @@ void _defineTestSuites() {
     ...earlyChapters,
   });
 
+  // zlox (Zig interpreter)
+  var zloxExecutable = "zlox";
+  if (Platform.isWindows) {
+    zloxExecutable += ".exe";
+  }
+  _allSuites["zlox"] = Suite("zlox", "zig", zloxExecutable, [], {
+    "test": "pass",
+    ...earlyChapters,
+  });
+  _cSuites.add("zlox");
+
   c("chap17_compiling", {
     // No real interpreter yet.
     "test": "skip",

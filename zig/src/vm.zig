@@ -435,7 +435,7 @@ pub const VM = struct {
                 },
                 .OP_PRINT => {
                     printValue(self.pop());
-                    std.debug.print("\n", .{});
+                    // std.debug.print("\n", .{}); // move to printValue() for convenient writer initialization
                 },
                 .OP_JUMP => {
                     const offset = reader.readShort(frame);

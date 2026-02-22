@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 
 const Chunk = @import("chunk.zig").Chunk;
 const DEBUG_LOG_GC = @import("common.zig").DEBUG_LOG_GC;
@@ -322,27 +323,29 @@ pub const ObjBoundMethod = struct {
     }
 };
 
-fn printFunction(function: *ObjFunction) void {
+fn printFunction(stdout: *std.Io.Writer, function: *ObjFunction) void {
     if (function.name) |func_name| {
-        std.debug.print("<fn {s}>", .{func_name.chars});
+        stdout.print("<fn {s}>", .{func_name.chars}) catch unreachable;
     } else {
-        std.debug.print("<script>", .{});
+        stdout.print("<script>", .{}) catch unreachable;
     }
+    stdout.flush() catch unreachable;
 }
 
-pub fn printObject(value: Value) void {
+pub fn printObject(stdout: *std.Io.Writer, value: Value) void {
     switch (objType(value)) {
-        .OBJ_BOUND_METHOD => printFunction(asBoundMethod(value).method.function),
-        .OBJ_CLASS => std.debug.print("{s}", .{asClass(value).name.chars}),
-        .OBJ_CLOSURE => printFunction(asClosure(value).function),
-        .OBJ_FUNCTION => printFunction(asFunction(value)),
-        .OBJ_INSTANCE => std.debug.print("{s} instance", .{asInstance(value).klass.name.chars}),
-        .OBJ_NATIVE => std.debug.print("<native fn>", .{}),
+        .OBJ_BOUND_METHOD => printFunction(stdout, asBoundMethod(value).method.function),
+        .OBJ_CLASS => stdout.print("{s}", .{asClass(value).name.chars}) catch unreachable,
+        .OBJ_CLOSURE => printFunction(stdout, asClosure(value).function),
+        .OBJ_FUNCTION => printFunction(stdout, asFunction(value)),
+        .OBJ_INSTANCE => stdout.print("{s} instance", .{asInstance(value).klass.name.chars}) catch unreachable,
+        .OBJ_NATIVE => stdout.print("<native fn>", .{}) catch unreachable,
         .OBJ_STRING => {
-            std.debug.print("{s}", .{asCString(value)});
+            stdout.print("{s}", .{asCString(value)}) catch unreachable;
         },
-        .OBJ_UPVALUE => std.debug.print("upvalue", .{}),
+        .OBJ_UPVALUE => stdout.print("upvalue", .{}) catch unreachable,
     }
+    stdout.flush() catch unreachable;
 }
 
 fn isObjType(value: Value, @"type": ObjType) bool {

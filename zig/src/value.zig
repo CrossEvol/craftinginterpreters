@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 
 const asString = @import("object.zig").asString;
 const NAN_BOXING = @import("common.zig").NAN_BOXING;
@@ -89,15 +90,25 @@ const NanBoxedValue = struct {
 
     // void printValue(Value value);
     pub fn printValue(value: NanBoxedValue) void {
+        var threaded: std.Io.Threaded = .init(std.heap.page_allocator, .{});
+        defer threaded.deinit();
+        const io = threaded.io();
+
+        var stdout_buffer: [1024]u8 = undefined;
+        var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
+        const stdout = &stdout_file_writer.interface;
+
         if (isBool(value)) {
-            std.debug.print("{}", .{value.asBool()});
+            stdout.print("{}", .{value.asBool()}) catch @panic("OUTPUT ERROR");
         } else if (isNil(value)) {
-            std.debug.print("nil", .{});
+            stdout.print("nil", .{}) catch @panic("OUTPUT ERROR");
         } else if (isNumber(value)) {
-            std.debug.print("{d}", .{value.asNumber()});
+            stdout.print("{d}", .{value.asNumber()}) catch @panic("OUTPUT ERROR");
         } else if (isObj(value)) {
-            printObject(value);
+            printObject(stdout, value);
         }
+        stdout.print("\n", .{}) catch @panic("OUTPUT ERROR");
+        stdout.flush() catch @panic("OUTPUT ERROR");
     }
 };
 
@@ -188,20 +199,30 @@ const TaggedUnionValue = union(ValueType) {
 
     // void printValue(Value value);
     pub fn printValue(value: TaggedUnionValue) void {
+        var threaded: std.Io.Threaded = .init(std.heap.page_allocator, .{});
+        defer threaded.deinit();
+        const io = threaded.io();
+
+        var stdout_buffer: [1024]u8 = undefined;
+        var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
+        const stdout = &stdout_file_writer.interface;
+
         switch (value) {
             .bool => {
-                std.debug.print("{}", .{value.asBool()});
+                stdout.print("{}", .{value.asBool()}) catch @panic("OUTPUT ERROR");
             },
             .nil => {
-                std.debug.print("nil", .{});
+                stdout.print("nil", .{}) catch @panic("OUTPUT ERROR");
             },
             .number => {
-                std.debug.print("{d}", .{value.asNumber()});
+                stdout.print("{d}", .{value.asNumber()}) catch @panic("OUTPUT ERROR");
             },
             .obj => {
-                printObject(value);
+                printObject(stdout, value);
             },
         }
+        stdout.print("\n", .{}) catch @panic("OUTPUT ERROR");
+        stdout.flush() catch @panic("OUTPUT ERROR");
     }
 };
 
