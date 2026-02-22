@@ -19,7 +19,7 @@
             "request": "launch",
             "program": "${workspaceRoot}/zig/zig-out/bin/zlox.exe",
             "args": [
-                "${workspaceRoot}/var.lox"
+                "${workspaceRoot}/method1.lox"
             ],
             "cwd": "${workspaceRoot}/zig",
             "preLaunchTask": "build-zlox-debug"

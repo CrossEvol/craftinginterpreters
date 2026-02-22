@@ -93,6 +93,8 @@ const Upvalue = struct {
 
 const FunctionType = enum {
     TYPE_FUNCTION,
+    TYPE_INITIALIZER,
+    TYPE_METHOD,
     TYPE_SCRIPT,
 };
 
@@ -120,6 +122,16 @@ const Kompiler = struct {
     }
 };
 
+const ClassCompiler = struct {
+    enclosing: ?*ClassCompiler,
+
+    pub fn init(enclosing: ?*ClassCompiler) ClassCompiler {
+        return .{
+            .enclosing = enclosing,
+        };
+    }
+};
+
 fn identifiersEqual(a: Token, b: Token) bool {
     if (a.lexeme.len != b.lexeme.len) return false;
     return std.mem.eql(u8, a.lexeme, b.lexeme);
@@ -128,6 +140,7 @@ fn identifiersEqual(a: Token, b: Token) bool {
 /// WARNING: use Compiler as whole compiler-related context in c codebase
 pub const Compiler = struct {
     current: ?*Kompiler,
+    currentClass: ?*ClassCompiler,
     parser: Parser,
     scanner: Scanner,
     vm: *VM,
@@ -135,6 +148,7 @@ pub const Compiler = struct {
     pub fn init(vm: *VM) Compiler {
         return .{
             .current = null,
+            .currentClass = null,
             .scanner = undefined,
             .parser = Parser.init(),
             .vm = vm,
@@ -251,7 +265,12 @@ pub const Compiler = struct {
     }
 
     fn emitReturn(self: *Compiler) void {
-        self.emitByte(OpCode.OP_NIL);
+        if (self.current.?.type == .TYPE_INITIALIZER) {
+            self.emitBytes(OpCode.OP_GET_LOCAL, @as(u8, 0));
+        } else {
+            self.emitByte(OpCode.OP_NIL);
+        }
+
         self.emitByte(OpCode.OP_RETURN);
     }
 
@@ -294,7 +313,18 @@ pub const Compiler = struct {
             self.current.?.function.name = self.vm.copyString(self.parser.previous.lexeme);
         }
         // WARNING: in c codebase type should be 0 here
-        self.current.?.locals[0] = Local.init(Token.init(.TOKEN_LEFT_PAREN, "", 0), 0);
+        self.current.?.locals[0] =
+            if (@"type" != .TYPE_FUNCTION)
+                Local.init(
+                    Token.init(.TOKEN_LEFT_PAREN, "this", 0),
+                    0,
+                )
+            else
+                Local.init(
+                    Token.init(.TOKEN_THIS, "", 0),
+                    0,
+                );
+
         self.current.?.local_count += 1;
 
         _ = self.vm.pop(); // now pop it for clean hand-off
@@ -523,6 +553,10 @@ pub const Compiler = struct {
         if (can_assign and self.match(.TOKEN_EQUAL)) {
             self.expression();
             self.emitBytes(OpCode.OP_SET_PROPERTY, name);
+        } else if (self.match(.TOKEN_LEFT_PAREN)) {
+            const arg_count = self.argumentList();
+            self.emitBytes(OpCode.OP_INVOKE, name);
+            self.emitByte(arg_count);
         } else {
             self.emitBytes(OpCode.OP_GET_PROPERTY, name);
         }
@@ -612,6 +646,18 @@ pub const Compiler = struct {
         self.namedVariable(self.parser.previous, can_assign);
     }
 
+    // [this]
+    fn this_(self: *Compiler, can_assign: bool) void {
+        _ = can_assign;
+
+        if (self.currentClass == null) {
+            self.@"error"("Can't use 'this' outside of a class.");
+            return;
+        }
+
+        self.variable(false);
+    }
+
     fn unary(self: *Compiler, can_assign: bool) void {
         _ = can_assign;
 
@@ -663,7 +709,7 @@ pub const Compiler = struct {
         .TOKEN_PRINT = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_RETURN = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_SUPER = ParseRule.init(null, null, .PREC_NONE),
-        .TOKEN_THIS = ParseRule.init(null, null, .PREC_NONE),
+        .TOKEN_THIS = ParseRule.init(this_, null, .PREC_NONE),
         .TOKEN_TRUE = ParseRule.init(literal, null, .PREC_NONE),
         .TOKEN_VAR = ParseRule.init(null, null, .PREC_NONE),
         .TOKEN_WHILE = ParseRule.init(null, null, .PREC_NONE),
@@ -745,16 +791,40 @@ pub const Compiler = struct {
         }
     }
 
+    fn method(self: *Compiler) void {
+        self.consume(.TOKEN_IDENTIFIER, "Expect method name.");
+        const constant = self.identifierConstant(self.parser.previous);
+
+        var @"type": FunctionType = .TYPE_METHOD;
+        if (self.parser.previous.lexeme.len == 4 and std.mem.eql(u8, "init", self.parser.previous.lexeme)) {
+            @"type" = .TYPE_INITIALIZER;
+        }
+
+        self.function(@"type");
+        self.emitBytes(OpCode.OP_METHOD, constant);
+    }
+
     fn classDeclaration(self: *Compiler) void {
         self.consume(.TOKEN_IDENTIFIER, "Expect class name.");
+        const class_name = self.parser.previous;
         const name_constant = self.identifierConstant(self.parser.previous);
         self.declareVariable();
 
         self.emitBytes(OpCode.OP_CLASS, name_constant);
         self.defineVariable(name_constant);
 
+        var class_compiler = ClassCompiler.init(self.currentClass);
+        self.currentClass = &class_compiler; // begin class compiler
+
+        self.namedVariable(class_name, false);
         self.consume(.TOKEN_LEFT_BRACE, "Expect '{' before class body.");
+        while (!self.check(.TOKEN_RIGHT_BRACE) and !self.check(.TOKEN_EOF)) {
+            self.method();
+        }
         self.consume(.TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
+        self.emitByte(OpCode.OP_POP);
+
+        self.currentClass = self.currentClass.?.enclosing; // end class compiler
     }
 
     fn funDeclaration(self: *Compiler) void {
@@ -864,6 +934,10 @@ pub const Compiler = struct {
         if (self.match(.TOKEN_SEMICOLON)) {
             self.emitReturn();
         } else {
+            if (self.current.?.type == .TYPE_INITIALIZER) {
+                self.@"error"("Can't return a value from an initializer.");
+            }
+
             self.expression();
             self.consume(.TOKEN_SEMICOLON, "Expect ';' after return value.");
             self.emitByte(OpCode.OP_RETURN);

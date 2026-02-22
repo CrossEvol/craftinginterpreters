@@ -8,6 +8,7 @@ const UINT8_COUNT = common.UINT8_COUNT;
 const ObjectNsp = @import("object.zig");
 const Obj = ObjectNsp.Obj;
 const asClosure = ObjectNsp.asClosure;
+const asBoundMethod = ObjectNsp.asBoundMethod;
 const asClass = ObjectNsp.asClass;
 const asFunction = ObjectNsp.asFunction;
 const asInstance = ObjectNsp.asInstance;
@@ -62,7 +63,7 @@ pub const GC = struct {
 
         object.is_marked = true;
 
-        self.vm.gray_stack.append(self.allocator, object) catch |err| {
+        self.vm.gray_stack.?.append(self.allocator, object) catch |err| {
             std.debug.print("{s}", .{@errorName(err)});
             std.process.exit(1);
         };
@@ -88,9 +89,15 @@ pub const GC = struct {
         }
 
         switch (object.type) {
+            .OBJ_BOUND_METHOD => {
+                const bound = object.asObjBoundMethod();
+                self.markValue(bound.receiver);
+                self.markObject(bound.method.asObj());
+            },
             .OBJ_CLASS => {
-                const class = object.asObjClass();
-                self.markObject(class.name.asObj());
+                const klass = object.asObjClass();
+                self.markObject(klass.name.asObj());
+                klass.methods.markTable();
             },
             .OBJ_CLOSURE => {
                 const closure = object.asObjClosure();
@@ -130,9 +137,14 @@ pub const GC = struct {
             );
         }
         switch (object.type) {
+            .OBJ_BOUND_METHOD => {
+                const bound = asBoundMethod(objVal(object));
+                self.allocator.destroy(bound);
+            },
             .OBJ_CLASS => {
-                const class = asClass(objVal(object));
-                self.allocator.destroy(class);
+                const klass = asClass(objVal(object));
+                klass.methods.deinit();
+                self.allocator.destroy(klass);
             },
             .OBJ_CLOSURE => {
                 const closure = asClosure(objVal(object));
@@ -184,11 +196,14 @@ pub const GC = struct {
         if (self.vm.compiler) |compiler| {
             compiler.markCompilerRoots();
         }
+        if (self.vm.init_string) |init_string| {
+            self.markObject(init_string.asObj());
+        }
     }
 
     fn traceReferences(self: *GC) void {
-        while (self.vm.gray_stack.items.len > 0) {
-            const object = self.vm.gray_stack.pop();
+        while (self.vm.gray_stack.?.items.len > 0) {
+            const object = self.vm.gray_stack.?.pop();
             self.blackenObject(object.?);
         }
     }
@@ -254,7 +269,8 @@ pub const GC = struct {
                 break;
             }
         }
-        self.vm.gray_stack.clearAndFree(self.allocator);
+
+        self.vm.gray_stack.?.clearAndFree(self.allocator);
     }
 };
 

@@ -12,6 +12,10 @@ pub fn objType(value: Value) ObjType {
     return asObj(value).type;
 }
 
+pub fn isBoundMethod(value: Value) bool {
+    return isObjType(value, .OBJ_BOUND_METHOD);
+}
+
 pub fn isClass(value: Value) bool {
     return isObjType(value, .OBJ_CLASS);
 }
@@ -34,6 +38,10 @@ pub fn isNative(value: Value) bool {
 
 pub fn isString(value: Value) bool {
     return isObjType(value, .OBJ_STRING);
+}
+
+pub fn asBoundMethod(value: Value) *ObjBoundMethod {
+    return @alignCast(@fieldParentPtr("obj", asObj(value)));
 }
 
 pub fn asClass(value: Value) *ObjClass {
@@ -69,6 +77,7 @@ pub fn asCString(value: Value) []const u8 {
 }
 
 const ObjType = enum {
+    OBJ_BOUND_METHOD,
     OBJ_CLASS,
     OBJ_CLOSURE,
     OBJ_FUNCTION,
@@ -97,6 +106,11 @@ pub const Obj = struct {
         }
 
         return obj;
+    }
+
+    /// Downcast , *Obj -> *ObjBoundMethod
+    pub fn asObjBoundMethod(obj: *Obj) *ObjBoundMethod {
+        return @alignCast(@fieldParentPtr("obj", obj));
     }
 
     /// Downcast , *Obj -> *ObjClass
@@ -253,11 +267,13 @@ pub const ObjClosure = struct {
 pub const ObjClass = struct {
     obj: Obj,
     name: *ObjString,
+    methods: Table,
 
     pub fn init(vm: *VM, name: *ObjString) ObjClass {
         return .{
             .obj = Obj.init(@sizeOf(ObjClass), .OBJ_CLASS, vm.objects),
             .name = name,
+            .methods = Table.init(vm),
         };
     }
 
@@ -286,6 +302,25 @@ pub const ObjInstance = struct {
     }
 };
 
+pub const ObjBoundMethod = struct {
+    obj: Obj,
+    receiver: Value,
+    method: *ObjClosure,
+
+    pub fn init(vm: *VM, receiver: Value, method: *ObjClosure) ObjBoundMethod {
+        return .{
+            .obj = Obj.init(@sizeOf(ObjBoundMethod), .OBJ_BOUND_METHOD, vm.objects),
+            .receiver = receiver,
+            .method = method,
+        };
+    }
+
+    /// Upcast , *ObjBoundMethod -> *Obj
+    pub fn asObj(self: *ObjBoundMethod) *Obj {
+        return &self.obj;
+    }
+};
+
 fn printFunction(function: *ObjFunction) void {
     if (function.name) |func_name| {
         std.debug.print("<fn {s}>", .{func_name.chars});
@@ -296,6 +331,7 @@ fn printFunction(function: *ObjFunction) void {
 
 pub fn printObject(value: Value) void {
     switch (objType(value)) {
+        .OBJ_BOUND_METHOD => printFunction(asBoundMethod(value).method.function),
         .OBJ_CLASS => std.debug.print("{s}", .{asClass(value).name.chars}),
         .OBJ_CLOSURE => printFunction(asClosure(value).function),
         .OBJ_FUNCTION => printFunction(asFunction(value)),

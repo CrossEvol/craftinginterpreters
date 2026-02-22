@@ -17,6 +17,7 @@ const Obj = ObjectNsp.Obj;
 const ObjFunction = ObjectNsp.ObjFunction;
 const isInstance = ObjectNsp.isInstance;
 const asInstance = ObjectNsp.asInstance;
+const asBoundMethod = ObjectNsp.asBoundMethod;
 const ObjClosure = ObjectNsp.ObjClosure;
 const ObjUpvalue = ObjectNsp.ObjUpvalue;
 const objType = ObjectNsp.objType;
@@ -26,6 +27,7 @@ const asClass = ObjectNsp.asClass;
 const asClosure = ObjectNsp.asClosure;
 const ObjNative = ObjectNsp.ObjNative;
 const ObjInstance = ObjectNsp.ObjInstance;
+const ObjBoundMethod = ObjectNsp.ObjBoundMethod;
 const ObjClass = ObjectNsp.ObjClass;
 const ObjString = ObjectNsp.ObjString;
 const asNative = ObjectNsp.asNative;
@@ -91,12 +93,13 @@ pub const VM = struct {
     stackTop: usize,
     globals: Table,
     strings: Table,
+    init_string: ?*ObjString,
     openUpvalues: ?*ObjUpvalue,
 
     bytes_allocated: usize,
     next_gc: usize,
     objects: ?*Obj,
-    gray_stack: std.ArrayList(*Obj),
+    gray_stack: ?std.ArrayList(*Obj),
 
     compiler: ?*Compiler,
 
@@ -111,11 +114,12 @@ pub const VM = struct {
             .stackTop = 0,
             .globals = undefined,
             .strings = undefined,
+            .init_string = null, // Set later
             .openUpvalues = null,
             .bytes_allocated = 0,
             .next_gc = 1024 * 1024,
             .objects = null,
-            .gray_stack = undefined, // Set later
+            .gray_stack = null, // Set later
             .compiler = null,
             .gc = undefined, // Set later
             .allocator = allocator,
@@ -131,12 +135,14 @@ pub const VM = struct {
         vm.objects = null;
         vm.globals = Table.init(vm);
         vm.strings = Table.init(vm);
+        vm.init_string = vm.copyString("init");
         vm.defineNative("clock", clockNative);
     }
 
     pub fn deinit(self: *VM) void {
         self.globals.deinit();
         self.strings.deinit();
+        self.init_string = null;
         self.gc.deinit();
     }
 
@@ -303,13 +309,12 @@ pub const VM = struct {
                     const name = self.readString();
 
                     const value, const ok = instance.fields.get(name);
-                    if (!ok) {
-                        self.runtimeError("Undefined property '{s}'.", .{name.chars});
+                    if (ok) {
+                        _ = self.pop(); // Instance.
+                        self.push(value);
+                    } else if (!self.bindMethod(instance.klass, name)) {
                         return .INTERPRET_RUNTIME_ERROR;
                     }
-
-                    _ = self.pop(); // Instance.
-                    self.push(value);
                 },
                 .OP_SET_PROPERTY => {
                     if (!isInstance(self.peek(1))) {
@@ -408,6 +413,14 @@ pub const VM = struct {
                     }
                     frame = &self.frames[self.frame_count - 1];
                 },
+                .OP_INVOKE => {
+                    const method = self.readString();
+                    const arg_count = self.readByte();
+                    if (!self.invoke(method, arg_count)) {
+                        return .INTERPRET_RUNTIME_ERROR;
+                    }
+                    frame = &self.frames[self.frame_count - 1];
+                },
                 .OP_CLOSURE => {
                     const function = asFunction(self.readConstant());
                     const closure = self.newClosure(function);
@@ -442,6 +455,9 @@ pub const VM = struct {
                 .OP_CLASS => {
                     const klass = self.newClass(self.readString());
                     self.push(objVal(klass.asObj()));
+                },
+                .OP_METHOD => {
+                    self.defineMethod(self.readString());
                 },
                 else => {},
             }
@@ -532,9 +548,22 @@ pub const VM = struct {
     fn callValue(self: *VM, callee: Value, arg_count: usize) bool {
         if (isObj(callee)) {
             switch (objType(callee)) {
+                .OBJ_BOUND_METHOD => {
+                    const bound = asBoundMethod(callee);
+                    self.stack[self.stackTop - arg_count - 1] = bound.receiver;
+                    return self.call(bound.method, arg_count);
+                },
                 .OBJ_CLASS => {
                     const klass = asClass(callee);
                     self.stack[self.stackTop - arg_count - 1] = objVal(self.newInstance(klass).asObj());
+                    const initializer, const ok = klass.methods.get(self.init_string.?);
+                    if (ok) {
+                        return self.call(asClosure(initializer), arg_count);
+                    } else if (arg_count != 0) {
+                        self.runtimeError("Expected 0 arguments but got {d}.", .{arg_count});
+                        return false;
+                    }
+
                     return true;
                 },
                 .OBJ_CLOSURE => { // [switch]
@@ -555,6 +584,49 @@ pub const VM = struct {
 
         self.runtimeError("Can only call functions and classes.", .{});
         return false;
+    }
+
+    fn invokeFromClass(self: *VM, klass: *ObjClass, name: *ObjString, arg_count: usize) bool {
+        const method, const ok = klass.methods.get(name);
+        if (!ok) {
+            self.runtimeError("Undefined property '{s}'.", .{name.chars});
+            return false;
+        }
+
+        return self.call(asClosure(method), arg_count);
+    }
+
+    fn invoke(self: *VM, name: *ObjString, arg_count: usize) bool {
+        const receiver = self.peek(arg_count);
+
+        if (!isInstance(receiver)) {
+            self.runtimeError("Only instances have methods.", .{});
+            return false;
+        }
+
+        const instance = asInstance(receiver);
+
+        const value, const ok = instance.fields.get(name);
+        if (ok) {
+            self.stack[self.stackTop - arg_count - 1] = value;
+            return self.callValue(value, arg_count);
+        }
+
+        return self.invokeFromClass(instance.klass, name, arg_count);
+    }
+
+    fn bindMethod(self: *VM, klass: *ObjClass, name: *ObjString) bool {
+        const method, const ok = klass.methods.get(name);
+        if (!ok) {
+            self.runtimeError("Undefined property '{s}'.", .{name.chars});
+            return false;
+        }
+
+        const bound = self.newBoundMethod(self.peek(0), asClosure(method));
+
+        _ = self.pop();
+        self.push(objVal(bound.asObj()));
+        return true;
     }
 
     fn captureUpvalue(self: *VM, local: *Value) *ObjUpvalue {
@@ -594,6 +666,13 @@ pub const VM = struct {
         }
     }
 
+    fn defineMethod(self: *VM, name: *ObjString) void {
+        const method = self.peek(0);
+        const klass = asClass(self.peek(1));
+        _ = klass.methods.set(name, method);
+        _ = self.pop();
+    }
+
     fn isFalsy(value: Value) bool {
         return isNil(value) or (isBool(value) and !asBool(value));
     }
@@ -617,6 +696,17 @@ pub const VM = struct {
             hash *%= 16777619;
         }
         return hash;
+    }
+
+    pub fn newBoundMethod(self: *VM, receiver: Value, method: *ObjClosure) *ObjBoundMethod {
+        const bound = self.allocator.create(ObjBoundMethod) catch |err| {
+            std.debug.print("{s}", .{@errorName(err)});
+            @panic("OOM");
+        };
+        bound.* = ObjBoundMethod.init(self, receiver, method);
+        self.objects = &bound.obj;
+
+        return bound;
     }
 
     pub fn newClass(self: *VM, name: *ObjString) *ObjClass {

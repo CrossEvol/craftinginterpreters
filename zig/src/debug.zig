@@ -24,6 +24,20 @@ fn constantInstruction(name: []const u8, chunk: *Chunk, offset: i32) i32 {
     return offset + 2;
 }
 
+fn invokeInstruction(name: []const u8, chunk: *Chunk, offset: i32) i32 {
+    const constant = chunk.code.items[@as(usize, @intCast(offset + 1))];
+    const arg_count = chunk.code.items[@as(usize, @intCast(offset + 2))];
+
+    std.debug.print(
+        "{s:<16} ({d} args) {d:4} '",
+        .{ name, arg_count, constant },
+    );
+    printValue(chunk.constants.values.items[@as(usize, @intCast(constant))]);
+    std.debug.print("'\n", .{});
+
+    return offset + 3;
+}
+
 fn simpleInstruction(name: []const u8, offset: i32) i32 {
     std.debug.print("{s}\n", .{name});
     return offset + 1;
@@ -86,6 +100,7 @@ pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
         .OP_JUMP_IF_FALSE => return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset),
         .OP_LOOP => return jumpInstruction("OP_LOOP", -1, chunk, offset),
         .OP_CALL => return byteInstruction("OP_CALL", chunk, offset),
+        .OP_INVOKE => return invokeInstruction("OP_INVOKE", chunk, offset),
         .OP_CLOSURE => {
             var offsetU: usize = @intCast(offset);
             offsetU += 1;
@@ -111,6 +126,7 @@ pub fn disassembleInstruction(chunk: *Chunk, offset: i32) i32 {
         .OP_CLOSE_UPVALUE => return simpleInstruction("OP_CLOSE_UPVALUE", offset),
         .OP_RETURN => return simpleInstruction("OP_RETURN", offset),
         .OP_CLASS => return constantInstruction("OP_CLASS", chunk, offset),
+        .OP_METHOD => return constantInstruction("OP_METHOD", chunk, offset),
         else => {
             std.debug.print("Unknown opcode {d}\n", .{instruction});
             return offset + 1;
