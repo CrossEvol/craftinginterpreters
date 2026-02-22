@@ -813,8 +813,8 @@ pub const Compiler = struct {
                 }
             }
         }
-        self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after function name.");
-        self.consume(.TOKEN_LEFT_BRACE, "Expect '{' after function name.");
+        self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
+        self.consume(.TOKEN_LEFT_BRACE, "Expect '{' before function body.");
         self.block();
 
         const func = self.endCompiler();
