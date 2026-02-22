@@ -3,6 +3,7 @@ const std = @import("std");
 const Chunk = @import("chunk.zig").Chunk;
 const common = @import("common.zig");
 const DEBUG_TRACE_EXECUTION = common.DEBUG_TRACE_EXECUTION;
+const C_CLOCK = common.C_CLOCK;
 const DEBUG_STRESS_GC = common.DEBUG_STRESS_GC;
 const DEBUG_LOG_GC = common.DEBUG_LOG_GC;
 const UINT8_COUNT = common.UINT8_COUNT;
@@ -151,12 +152,23 @@ pub const VM = struct {
         _ = arg_count;
         _ = args;
 
-        const now = std.time.Instant.now() catch @panic("clockTime: timestamp failed");
-        const ns = now.timestamp;
+        if (C_CLOCK) {
+            const c = @cImport({
+                @cInclude("time.h");
+            });
 
-        const t = @as(f64, @floatFromInt(ns)) / @as(f64, std.time.ns_per_ms) / @as(f64, 10);
+            const clock_ticks = c.clock();
+            const seconds = @as(f64, @floatFromInt(clock_ticks)) /
+                @as(f64, @floatFromInt(c.CLOCKS_PER_SEC));
 
-        return numberVal(t);
+            return numberVal(seconds);
+        } else {
+            const now = std.time.Instant.now() catch @panic("clockTime: timestamp failed");
+            const ns = now.timestamp;
+
+            const t = @as(f64, @floatFromInt(ns)) / @as(f64, std.time.ns_per_ms) / @as(f64, 10);
+            return numberVal(t);
+        }
     }
 
     fn resetStack(self: *VM) void {

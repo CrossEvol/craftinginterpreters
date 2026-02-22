@@ -12,11 +12,14 @@ endif
 BUILD_SNAPSHOT := $(BUILD_DIR)/build.dart.snapshot
 TEST_SNAPSHOT := $(BUILD_DIR)/test.dart.snapshot
 
+releasez: 
+	@ zig build-exe zig/src/main.zig --name main_release  -O ReleaseFast -lc
+
 buildz:
-	@ zig build-exe zig/src/main.zig
+	@ zig build-exe zig/src/main.zig  -lc
 
 runz: 
-	@ zig run zig/src/main.zig
+	@ zig run zig/src/main.zig  -lc
 
 default: book clox jlox
 

@@ -1,6 +1,7 @@
 const std = @import("std");
 
 pub const DEBUG_TRACE_EXECUTION = false;
+pub const C_CLOCK = true;
 pub const NAN_BOXING = true;
 pub const DEBUG_PRINT_CODE = false;
 pub const DEBUG_STRESS_GC = false;
