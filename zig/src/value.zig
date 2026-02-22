@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const asString = @import("object.zig").asString;
+const NAN_BOXING = @import("common.zig").NAN_BOXING;
 const Obj = @import("object.zig").Obj;
 const ObjString = @import("object.zig").ObjString;
 const printObject = @import("object.zig").printObject;
@@ -13,59 +14,146 @@ const ValueType = enum {
     obj,
 };
 
-pub const Value = union(ValueType) {
+pub const Value = if (NAN_BOXING) NanBoxedValue else TaggedUnionValue;
+
+const NanBoxedValue = struct {
+    raw: u64,
+
+    const Self = @This();
+
+    const SIGN_BIT: u64 = 0x8000000000000000;
+    const QNAN: u64 = 0x7ffc000000000000;
+
+    const TAG_NIL = 1; // 01.
+    const TAG_FALSE = 2; // 10.
+    const TAG_TRUE = 3; // 11.
+
+    const FALSE_VAL: u64 = QNAN | TAG_FALSE;
+    const TRUE_VAL: u64 = QNAN | TAG_TRUE;
+    const NIL_VAL: u64 = QNAN | TAG_NIL;
+    pub const nil_val: NanBoxedValue = .{ .raw = NIL_VAL };
+
+    pub inline fn isBool(self: Self) bool {
+        return (self.raw | 1) == TRUE_VAL;
+    }
+
+    pub inline fn isNil(self: Self) bool {
+        return self.raw == NIL_VAL;
+    }
+
+    pub inline fn isNumber(self: Self) bool {
+        return (self.raw & QNAN) != QNAN;
+    }
+
+    pub inline fn isObj(self: Self) bool {
+        return (self.raw & (QNAN | SIGN_BIT)) == (QNAN | SIGN_BIT);
+    }
+
+    pub inline fn asBool(self: Self) bool {
+        return self.raw == TRUE_VAL;
+    }
+
+    pub inline fn asNumber(self: Self) f64 {
+        return @bitCast(self.raw);
+    }
+
+    pub inline fn asObj(self: Self) *Obj {
+        const ptr_int = @as(usize, @intCast(self.raw & (~(SIGN_BIT | QNAN))));
+        return @ptrFromInt(ptr_int);
+    }
+
+    pub fn boolVal(b: bool) NanBoxedValue {
+        return .{ .raw = if (b) TRUE_VAL else FALSE_VAL };
+    }
+
+    inline fn nilVal() NanBoxedValue {
+        return .{ .raw = NIL_VAL };
+    }
+
+    pub fn numberVal(num: f64) NanBoxedValue {
+        return .{ .raw = @bitCast(num) };
+    }
+
+    pub fn objVal(obj: *Obj) NanBoxedValue {
+        const ptr_int = @intFromPtr(obj);
+        return .{ .raw = SIGN_BIT | QNAN | @as(u64, @intCast(ptr_int)) };
+    }
+
+    pub fn valuesEqual(a: NanBoxedValue, b: NanBoxedValue) bool {
+        if (isNumber(a) and isNumber(b)) {
+            return asNumber(a) == asNumber(b);
+        }
+
+        return a.raw == b.raw;
+    }
+
+    // void printValue(Value value);
+    pub fn printValue(value: NanBoxedValue) void {
+        if (isBool(value)) {
+            std.debug.print("{}", .{value.asBool()});
+        } else if (isNil(value)) {
+            std.debug.print("nil", .{});
+        } else if (isNumber(value)) {
+            std.debug.print("{d}", .{value.asNumber()});
+        } else if (isObj(value)) {
+            printObject(value);
+        }
+    }
+};
+
+const TaggedUnionValue = union(ValueType) {
     bool: bool,
     nil: void,
     number: f64,
     obj: *Obj,
 
-    pub inline fn isBool(value: Value) bool {
+    pub inline fn isBool(value: TaggedUnionValue) bool {
         return switch (value) {
             .bool => true,
             else => false,
         };
     }
 
-    pub inline fn isNil(value: Value) bool {
+    pub inline fn isNil(value: TaggedUnionValue) bool {
         return switch (value) {
             .nil => true,
             else => false,
         };
     }
 
-    pub inline fn isNumber(value: Value) bool {
+    pub inline fn isNumber(value: TaggedUnionValue) bool {
         return switch (value) {
             .number => true,
             else => false,
         };
     }
 
-    pub inline fn isObj(value: Value) bool {
+    pub inline fn isObj(value: TaggedUnionValue) bool {
         return switch (value) {
             .obj => true,
             else => false,
         };
     }
 
-    pub inline fn asBool(value: Value) bool {
+    pub inline fn asBool(value: TaggedUnionValue) bool {
         return value.bool;
     }
 
-    pub inline fn asNumber(value: Value) f64 {
+    pub inline fn asNumber(value: TaggedUnionValue) f64 {
         return value.number;
     }
 
-    pub inline fn asObj(value: Value) *Obj {
+    pub inline fn asObj(value: TaggedUnionValue) *Obj {
         return value.obj;
     }
 
-    pub fn boolVal(value: bool) Value {
+    pub fn boolVal(value: bool) TaggedUnionValue {
         return .{
             .bool = value,
         };
     }
 
-    inline fn nilVal() Value {
+    inline fn nilVal() TaggedUnionValue {
         return .{
             .nil = {},
         };
@@ -73,19 +161,19 @@ pub const Value = union(ValueType) {
 
     pub const nil_val = nilVal();
 
-    pub fn numberVal(value: f64) Value {
+    pub fn numberVal(value: f64) TaggedUnionValue {
         return .{
             .number = value,
         };
     }
 
-    pub fn objVal(object: *Obj) Value {
+    pub fn objVal(object: *Obj) TaggedUnionValue {
         return .{
             .obj = object,
         };
     }
 
-    pub fn valuesEqual(a: Value, b: Value) bool {
+    pub fn valuesEqual(a: TaggedUnionValue, b: TaggedUnionValue) bool {
         if (std.meta.activeTag(a) != std.meta.activeTag(b)) {
             return false;
         }
@@ -96,6 +184,24 @@ pub const Value = union(ValueType) {
             .number => a.asNumber() == b.asNumber(),
             .obj => asObj(a) == asObj(b),
         };
+    }
+
+    // void printValue(Value value);
+    pub fn printValue(value: TaggedUnionValue) void {
+        switch (value) {
+            .bool => {
+                std.debug.print("{}", .{value.asBool()});
+            },
+            .nil => {
+                std.debug.print("nil", .{});
+            },
+            .number => {
+                std.debug.print("{d}", .{value.asNumber()});
+            },
+            .obj => {
+                printObject(value);
+            },
+        }
     }
 };
 
@@ -130,21 +236,3 @@ pub const ValueArray = struct {
         };
     }
 };
-
-// void printValue(Value value);
-pub fn printValue(value: Value) void {
-    switch (value) {
-        .bool => {
-            std.debug.print("{}", .{value.asBool()});
-        },
-        .nil => {
-            std.debug.print("nil", .{});
-        },
-        .number => {
-            std.debug.print("{d}", .{value.asNumber()});
-        },
-        .obj => {
-            printObject(value);
-        },
-    }
-}

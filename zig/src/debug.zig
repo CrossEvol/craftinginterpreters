@@ -3,7 +3,7 @@ const std = @import("std");
 const asFunction = @import("object.zig").asFunction;
 const Chunk = @import("chunk.zig").Chunk;
 const OpCode = @import("chunk.zig").OpCode;
-const printValue = @import("value.zig").printValue;
+const printValue = @import("value.zig").Value.printValue;
 
 pub fn disassembleChunk(chunk: *Chunk, name: []const u8) void {
     std.debug.print("== {s} ==\n", .{name});

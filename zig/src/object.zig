@@ -6,6 +6,7 @@ const Table = @import("table.zig").Table;
 const Value = @import("value.zig").Value;
 const nil_val = Value.nil_val;
 const asObj = Value.asObj;
+const isObj = Value.isObj;
 const VM = @import("vm.zig").VM;
 
 pub fn objType(value: Value) ObjType {
@@ -345,8 +346,5 @@ pub fn printObject(value: Value) void {
 }
 
 fn isObjType(value: Value, @"type": ObjType) bool {
-    return switch (value) {
-        .obj => |obj| obj.type == @"type",
-        else => false,
-    };
+    return isObj(value) and @intFromEnum(asObj(value).type) == @intFromEnum(@"type");
 }
